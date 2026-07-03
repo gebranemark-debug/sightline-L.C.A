@@ -1,0 +1,104 @@
+"""Smoke test — proves the backend works end to end without needing a real API
+key. The LLM calls are stubbed so we exercise routing, the finance engine, and
+DB persistence. Run: python test_local.py
+"""
+import os
+import tempfile
+
+# Use a throwaway SQLite file so the test never touches a real DB.
+_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+os.environ["DATABASE_URL"] = f"sqlite:///{_tmp.name}"
+os.environ["ANTHROPIC_API_KEY"] = "test-key-not-used"
+
+from app.finance import compute_ratios, detect_flags, score_credit  # noqa: E402
+
+# Structured financials matching the three demo borrowers (what extraction would return).
+MERIDIAN = dict(company="Meridian Freight & Logistics", loanRequest=250000,
+    revenueCurrent=4200000, revenuePrior=3600000, cogsCurrent=2940000,
+    ebitdaCurrent=620000, ebitdaPrior=480000, netIncomeCurrent=290000,
+    interestExpenseCurrent=85000, cash=380000,
+    accountsReceivableCurrent=620000, accountsReceivablePrior=540000,
+    inventory=210000, currentAssets=1210000, currentLiabilities=640000,
+    accountsPayable=410000, totalDebt=1150000, totalEquity=1480000,
+    debtService=330000, operatingCashFlow=450000)
+
+CASCADE = dict(company="Cascade Home Retail", loanRequest=300000,
+    revenueCurrent=5800000, revenuePrior=4900000, cogsCurrent=4640000,
+    ebitdaCurrent=180000, ebitdaPrior=258000, netIncomeCurrent=-80000,
+    interestExpenseCurrent=165000, cash=90000,
+    accountsReceivableCurrent=1340000, accountsReceivablePrior=720000,
+    inventory=1180000, currentAssets=2610000, currentLiabilities=2740000,
+    accountsPayable=1520000, totalDebt=1350000, totalEquity=420000,
+    debtService=360000, operatingCashFlow=-120000)
+
+AURORA = dict(company="Aurora Precision Manufacturing", loanRequest=200000,
+    revenueCurrent=3100000, revenuePrior=2950000, cogsCurrent=2170000,
+    ebitdaCurrent=370000, ebitdaPrior=345000, netIncomeCurrent=110000,
+    interestExpenseCurrent=95000, cash=150000,
+    accountsReceivableCurrent=540000, accountsReceivablePrior=500000,
+    inventory=480000, currentAssets=1170000, currentLiabilities=890000,
+    accountsPayable=420000, totalDebt=1280000, totalEquity=940000,
+    debtService=310000, operatingCashFlow=230000)
+
+print("=== 1. Finance engine (deterministic) ===")
+expected = {"Meridian": "APPROVE", "Cascade": "DECLINE", "Aurora": "REVIEW"}
+by_name = {"Meridian": MERIDIAN, "Cascade": CASCADE, "Aurora": AURORA}
+for name, f in by_name.items():
+    r = compute_ratios(f)
+    s = score_credit(r)
+    flags = detect_flags(f, r)
+    ok = "OK" if s["decision"] == expected[name] else "MISMATCH"
+    print(f"  {name:9} score={s['score']:>3}  decision={s['decision']:<8} "
+          f"(expected {expected[name]:<8}) flags={len(flags)}  [{ok}]")
+    assert s["decision"] == expected[name], f"{name} expected {expected[name]}"
+
+# --- API test with the LLM stubbed ---
+print("\n=== 2. API pipeline (LLM stubbed) ===")
+from app.routers import analyses as router_mod  # noqa: E402
+
+def fake_extract(text):
+    if "Cascade" in text: return CASCADE
+    if "Aurora" in text: return AURORA
+    return MERIDIAN
+
+def fake_memo(f, r, flags, scoring):
+    return (f"**Recommendation:** {scoring['decision']} ({scoring['score']}/100).\n"
+            f"**Executive summary:** {f['company']} reviewed. (stubbed memo)")
+
+router_mod.extract_financials = fake_extract
+router_mod.generate_memo = fake_memo
+
+from fastapi.testclient import TestClient  # noqa: E402
+from app.main import app  # noqa: E402
+
+client = TestClient(app)
+
+h = client.get("/api/health")
+print(f"  GET /api/health -> {h.status_code} {h.json()}")
+assert h.status_code == 200
+
+resp = client.post("/api/analyze", json={"text":
+    "LOAN APPLICATION — Cascade Home Retail Ltd. Financial statements attached, "
+    "revenue 5,800,000, EBITDA 180,000, net income -80,000."})
+print(f"  POST /api/analyze (Cascade) -> {resp.status_code}")
+data = resp.json()
+assert resp.status_code == 200, data
+print(f"     decision={data['decision']} score={data['score']} "
+      f"flags={len(data['flags'])} factors={len(data['factors'])}")
+assert data["decision"] == "DECLINE"
+assert data["counterfactual"]  # should surface the biggest drag
+aid = data["id"]
+
+lst = client.get("/api/analyses")
+print(f"  GET /api/analyses -> {lst.status_code}, {len(lst.json())} record(s) persisted")
+assert lst.status_code == 200 and len(lst.json()) == 1
+
+one = client.get(f"/api/analyses/{aid}")
+print(f"  GET /api/analyses/{{id}} -> {one.status_code}, company={one.json()['company']}")
+assert one.status_code == 200
+
+missing = client.get("/api/analyses/does-not-exist")
+print(f"  GET /api/analyses/does-not-exist -> {missing.status_code} (expected 404)")
+assert missing.status_code == 404
+
+print("\nALL CHECKS PASSED ✅")
