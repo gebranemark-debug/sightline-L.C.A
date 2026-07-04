@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* Design tokens from CONTRACT.md.
+   Tailwind v4 turns every `--color-<name>` into `bg-<name>`, `text-<name>`,
+   `border-<name>` utilities, and every `--font-<name>` into `font-<name>`. */
+@theme {
+  --color-canvas:         #0A2E30;
+  --color-panel:          #0F3B3F;
+  --color-panel-alt:      #123F44;
+  --color-raised:         #15474C;
+  --color-line:           #1E5257;
+  --color-ink:            #EAF2F1;
+  --color-sub:            #A8C6C6;
+  --color-muted:          #7FA3A3;
+  --color-off-white:      #F7F9F9;
+  --color-gold:           #E0A83A;
+  --color-gold-soft:      #F0D9A8;
+  --color-decision-green: #43B581;
+  --color-decision-amber: #E0A83A;
+  --color-decision-red:   #E5674E;
+
+  --font-serif: Georgia, "Times New Roman", serif;
+  --font-sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Baseline: canvas is the page background, ink is the default text color,
+   sans is the default face. Everything else opts in via Tailwind classes. */
+html, body, #root { min-height: 100dvh; }
+
+body {
+  margin: 0;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
