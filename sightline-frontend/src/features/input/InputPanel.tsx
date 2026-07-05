@@ -21,7 +21,14 @@ type PipelineSteps = {
 const ALL_WAIT: PipelineSteps = { extract: "wait", compute: "wait", decide: "wait", memo: "wait" };
 const ALL_DONE: PipelineSteps = { extract: "done", compute: "done", decide: "done", memo: "done" };
 const STEP_KEYS = ["extract", "compute", "decide", "memo"] as const;
-const STEP_MS = 400;
+const MIN_TEXT_LENGTH = 40;
+
+// Expected duration for a Railway cold-start end-to-end. Each pipeline step
+// gets one quarter of the timeline (~3.75s). The memo step (last) does NOT
+// auto-complete: if the API is still pending past 15s, memo stays in "run"
+// until the result actually lands and we snap the whole row to done.
+const TOTAL_MS = 15000;
+const STEP_MS = TOTAL_MS / STEP_KEYS.length;
 
 export function InputPanel({ onAnalyze, onReset, loading, hasResult }: Props) {
   const defaultSample = SAMPLES.find((s) => s.key === DEFAULT_SAMPLE_KEY)!;
@@ -29,27 +36,29 @@ export function InputPanel({ onAnalyze, onReset, loading, hasResult }: Props) {
   const [text, setText] = useState<string>(defaultSample.text);
   const [steps, setSteps] = useState<PipelineSteps>(ALL_WAIT);
 
-  // Pipeline animation: while loading, roll each step wait→run→done at a
-  // fixed cadence — the API is atomic so this is theatre, not real telemetry.
-  // When the result lands, snap all steps to done. On error or idle, reset.
   useEffect(() => {
     if (loading) {
       setSteps(ALL_WAIT);
       const timers: number[] = [];
-      STEP_KEYS.forEach((s, i) => {
+      for (let i = 0; i < STEP_KEYS.length; i++) {
+        const stepKey = STEP_KEYS[i];
         timers.push(
           window.setTimeout(
-            () => setSteps((prev) => ({ ...prev, [s]: "run" })),
+            () => setSteps((prev) => ({ ...prev, [stepKey]: "run" })),
             i * STEP_MS,
           ),
         );
-        timers.push(
-          window.setTimeout(
-            () => setSteps((prev) => ({ ...prev, [s]: "done" })),
-            (i + 1) * STEP_MS,
-          ),
-        );
-      });
+        // Auto-complete every step except the final memo one; memo waits for
+        // the actual API response so we don't lie about being finished.
+        if (i < STEP_KEYS.length - 1) {
+          timers.push(
+            window.setTimeout(
+              () => setSteps((prev) => ({ ...prev, [stepKey]: "done" })),
+              (i + 1) * STEP_MS,
+            ),
+          );
+        }
+      }
       return () => timers.forEach(clearTimeout);
     }
     setSteps(hasResult ? ALL_DONE : ALL_WAIT);
@@ -62,7 +71,14 @@ export function InputPanel({ onAnalyze, onReset, loading, hasResult }: Props) {
     onReset();
   };
 
-  const canSubmit = !loading && text.trim().length >= 40;
+  const isTooShort = text.trim().length < MIN_TEXT_LENGTH;
+  const canSubmit = !loading && !isTooShort;
+
+  const buttonSurface = loading
+    ? "bg-raised cursor-default"
+    : isTooShort
+      ? "bg-gold opacity-40 cursor-not-allowed"
+      : "bg-gold cursor-pointer hover:brightness-105";
 
   return (
     <>
@@ -94,13 +110,20 @@ export function InputPanel({ onAnalyze, onReset, loading, hasResult }: Props) {
           className="block h-[260px] w-full resize-y rounded-xl border border-line bg-canvas p-3 font-mono text-[11.5px] leading-relaxed text-sub"
         />
 
+        {/* Button + hover/focus caption below.
+            The button uses aria-disabled + a click guard rather than the
+            native `disabled` attribute so it can still receive :hover and
+            :focus when the text is too short — that's how the peer-* caption
+            below gets triggered. */}
         <button
           type="button"
-          onClick={() => onAnalyze(text)}
-          disabled={!canSubmit}
+          onClick={() => {
+            if (canSubmit) onAnalyze(text);
+          }}
+          aria-disabled={!canSubmit}
           className={
-            "mt-3 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-canvas disabled:cursor-default disabled:opacity-60 " +
-            (loading ? "bg-raised" : "bg-gold")
+            "peer mt-3 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-canvas " +
+            buttonSurface
           }
         >
           {loading ? (
@@ -113,6 +136,11 @@ export function InputPanel({ onAnalyze, onReset, loading, hasResult }: Props) {
             </>
           )}
         </button>
+        {isTooShort && !loading && (
+          <p className="mt-1.5 hidden text-[11.5px] text-muted peer-hover:block peer-focus:block">
+            Loan file needs at least {MIN_TEXT_LENGTH} characters.
+          </p>
+        )}
 
         <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-line pt-3">
           <StepRow state={steps.extract} label="Extract financials (LLM)" />

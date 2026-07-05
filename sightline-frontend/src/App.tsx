@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ScrollText, ShieldCheck } from "lucide-react";
 import { analyze, type AnalysisResult } from "./api/client";
 import { InputPanel } from "./features/input/InputPanel";
@@ -9,6 +9,7 @@ import { FlagsList } from "./features/result/FlagsList";
 import { MemoPanel } from "./features/result/MemoPanel";
 import { HumanOversight } from "./features/result/HumanOversight";
 import { EmptyState, ErrorState, RunningState } from "./features/result/States";
+import { DEMO_RESULT } from "./lib/demo-result";
 
 // Thin shell. All layout, state, and orchestration live here; every visual
 // atom is in features/ or components/.
@@ -16,9 +17,15 @@ import { EmptyState, ErrorState, RunningState } from "./features/result/States";
 export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  // First load shows the demo Cascade result so the app never boots empty.
+  // Cleared to null on tab switch or Analyse click.
+  const [result, setResult] = useState<AnalysisResult | null>(DEMO_RESULT);
+  // Kept in a ref (not state) because it's only read on retry — no need to
+  // trigger a re-render when it changes.
+  const lastText = useRef<string>("");
 
   async function handleAnalyze(text: string) {
+    lastText.current = text;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -31,10 +38,36 @@ export default function App() {
     }
   }
 
+  function retry() {
+    if (lastText.current) handleAnalyze(lastText.current);
+  }
+
   function reset() {
     setResult(null);
     setError(null);
   }
+
+  // Precedence: loading > error > empty > result. A live request always beats
+  // a stale error card; a stale error beats an empty hint.
+  const rightColumn = loading ? (
+    <RunningState />
+  ) : error ? (
+    <ErrorState message={error} onRetry={retry} />
+  ) : result ? (
+    <>
+      <DecisionHeader result={result} />
+      <FactorsPanel
+        factors={result.factors}
+        counterfactual={result.counterfactual}
+      />
+      <RatiosGrid ratios={result.ratios} />
+      <FlagsList flags={result.flags} />
+      <MemoPanel memo={result.memo} />
+      <HumanOversight key={result.id} />
+    </>
+  ) : (
+    <EmptyState />
+  );
 
   return (
     <div className="min-h-dvh bg-canvas p-4 font-sans text-ink sm:p-6">
@@ -68,24 +101,7 @@ export default function App() {
           />
         </div>
 
-        <div className="lg:col-span-3">
-          {!result && !loading && !error && <EmptyState />}
-          {loading && <RunningState />}
-          {error && !loading && <ErrorState message={error} />}
-          {result && (
-            <>
-              <DecisionHeader result={result} />
-              <FactorsPanel
-                factors={result.factors}
-                counterfactual={result.counterfactual}
-              />
-              <RatiosGrid ratios={result.ratios} />
-              <FlagsList flags={result.flags} />
-              <MemoPanel memo={result.memo} />
-              <HumanOversight key={result.id} />
-            </>
-          )}
-        </div>
+        <div className="lg:col-span-3">{rightColumn}</div>
       </div>
     </div>
   );
