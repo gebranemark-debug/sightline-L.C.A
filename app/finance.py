@@ -74,6 +74,15 @@ def compute_ratios(f: dict[str, Any]) -> dict[str, Any]:
         ),
         "dso": dso, "dio": dio, "dpo": dpo, "ccc": ccc,
         "ocf": g("operatingCashFlow"),
+        # Loan-to-value against the whole book, not just this facility —
+        # matches how debtToEbitda / debtToEquity are scoped, and captures
+        # aggregate leverage against pledged collateral.
+        "ltv": _div(g("totalDebt"), g("collateralValue")),
+        # topCustomerShare is a raw extract, not a computed ratio, but we
+        # carry it through the ratios dict for score_credit (same pattern as
+        # ocf). Ratios schema has extra="ignore" so it's dropped on
+        # serialization and stays only in the opaque `financials` blob.
+        "topCustomerShare": g("topCustomerShare"),
     }
 
 
@@ -122,6 +131,19 @@ def detect_flags(f: dict[str, Any], r: dict[str, Any]) -> list[dict[str, str]]:
     nm = r["netMargin"]
     if nm is not None and ni is not None and ni >= 0 and nm < 0.03:
         add("med", f"Thin net margin of {fmt_pct(nm)}")
+
+    share = r.get("topCustomerShare")
+    if share is not None:
+        if share > 0.5:
+            add("high", f"Top customer represents {fmt_pct(share)} of revenue "
+                        "— severe concentration risk")
+        elif share >= 0.3:
+            add("med", f"Top customer represents {fmt_pct(share)} of revenue "
+                       "— concentration risk")
+
+    ltv = r.get("ltv")
+    if ltv is not None and ltv > 1.0:
+        add("high", f"LTV of {fmt_pct(ltv)} — debt exceeds pledged collateral")
 
     return flags
 
@@ -188,6 +210,27 @@ def _score_ocf(v: Number) -> int:
     return 6 if v >= 0 else -18
 
 
+def _score_concentration(share: Number) -> int:
+    # Fixed discrete bands to match the scorecard pattern. Unknown = 0 so
+    # missing data never manufactures either a boost or a drag.
+    if share is None: return 0
+    if share > 0.5: return -15
+    if share >= 0.3: return -8
+    return 0
+
+
+def _score_ltv(v: Number) -> int:
+    # LTV = totalDebt / collateralValue. Unsecured (no collateral) -> None -> 0
+    # points, treated as neutral rather than penalized: many facilities are
+    # deliberately unsecured (revolvers, RCFs), and the DSCR / leverage
+    # factors already capture the cash-flow view of that risk.
+    if v is None: return 0
+    if v < 0.7: return 6
+    if v < 0.9: return 0
+    if v <= 1.0: return -8
+    return -15
+
+
 def score_credit(r: dict[str, Any]) -> dict[str, Any]:
     factors = [
         {"key": "dscr", "label": "Debt service coverage (DSCR)",
@@ -206,6 +249,12 @@ def score_credit(r: dict[str, Any]) -> dict[str, Any]:
         {"key": "ocf", "label": "Operating cash flow",
          "value": ("Positive" if (r["ocf"] or 0) >= 0 else "Negative"),
          "points": _score_ocf(r["ocf"])},
+        {"key": "concentration", "label": "Customer concentration",
+         "value": fmt_pct(r.get("topCustomerShare")),
+         "points": _score_concentration(r.get("topCustomerShare"))},
+        {"key": "ltv", "label": "Loan-to-value (Debt/Collateral)",
+         "value": fmt_pct(r.get("ltv")),
+         "points": _score_ltv(r.get("ltv"))},
     ]
 
     score = max(0, min(100, 50 + sum(f["points"] for f in factors)))
@@ -220,6 +269,8 @@ def score_credit(r: dict[str, Any]) -> dict[str, Any]:
         "margin": ("restoring net margin above 5%", 4),
         "growth": ("bringing receivables growth back in line with revenue", 6),
         "ocf": ("turning operating cash flow positive", 6),
+        "concentration": ("diversifying revenue below 30% top-customer share", 0),
+        "ltv": ("reducing LTV below 90%", 0),
     }
     counterfactual = None
     worst = min(factors, key=lambda f: f["points"])

@@ -34,6 +34,9 @@ class Ratios(BaseModel):
     dpo: Optional[float] = None
     ccc: Optional[float] = None
     ocf: Optional[float] = None
+    # Loan-to-value: totalDebt / collateralValue. None for unsecured
+    # facilities (no collateral extracted) — the frontend renders "—".
+    ltv: Optional[float] = None
 
 
 class Flag(BaseModel):

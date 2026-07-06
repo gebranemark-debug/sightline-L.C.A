@@ -62,8 +62,19 @@ Schema:
   "currentAssets": number, "currentLiabilities": number,
   "accountsPayable": number,
   "totalDebt": number, "totalEquity": number,
-  "debtService": number, "operatingCashFlow": number
+  "debtService": number, "operatingCashFlow": number,
+  "topCustomerShare": number,
+  "collateralValue": number
 }}
+
+Notes on the last two fields:
+- topCustomerShare is a DECIMAL (0.38 for 38%). If the file says something \
+like "one client represents 38% of revenue" or "top customer accounts for \
+40%", extract that as a decimal. If concentration is not mentioned at all, \
+use null.
+- collateralValue is total pledged collateral in EUR (equipment appraisal, \
+fleet valuation, real estate, etc.). Use null for unsecured facilities such \
+as working-capital revolvers.
 
 LOAN FILE:
 \"\"\"
@@ -119,6 +130,8 @@ Current ratio: {fmt_x(r['currentRatio'])} | Quick ratio: {fmt_x(r['quickRatio'])
 Net margin: {fmt_pct(r['netMargin'])} | Revenue growth: {fmt_pct(r['revenueGrowth'])} | Receivables growth: {fmt_pct(r['receivablesGrowth'])}
 Cash conversion cycle: {fmt_days(r['ccc'])} (DSO {fmt_days(r['dso'])}, DIO {fmt_days(r['dio'])}, DPO {fmt_days(r['dpo'])})
 Operating cash flow: {fmt_eur(r['ocf'])}
+Customer concentration: {fmt_pct(f.get('topCustomerShare'))}
+Loan-to-value (Debt/Collateral): {fmt_pct(r.get('ltv'))} (collateral {fmt_eur(f.get('collateralValue'))})
 Score: {scoring['score']}/100 -> {scoring['decision']}
 Red flags:
 {flag_list}"""
