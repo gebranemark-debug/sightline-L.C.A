@@ -173,6 +173,20 @@ empty = client.post(
 print(f"  POST /api/analyze (empty PDF) -> {empty.status_code} (expected 415)")
 assert empty.status_code == 415, empty.json()  # empty file fails magic-byte check
 
+# 61 files exceeds the MAX_FILES = 60 ceiling by one, so the first bound check
+# fires before any PDF is even read. Reuses _make_tiny_pdf() so this stays
+# fast — each PDF is <1 KB and construction is cheap.
+too_many = client.post(
+    "/api/analyze",
+    files=[
+        ("files", (f"pdf_{i}.pdf", _make_tiny_pdf(), "application/pdf"))
+        for i in range(61)
+    ],
+)
+print(f"  POST /api/analyze (61 files)   -> {too_many.status_code} (expected 422)")
+assert too_many.status_code == 422, too_many.json()
+assert "60" in too_many.json()["detail"], too_many.json()
+
 
 # --- Borrower endpoints (LLM stubbed) ---
 print("\n=== 4. Borrower + file endpoints (LLM stubbed) ===")
