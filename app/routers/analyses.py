@@ -33,7 +33,9 @@ from ..llm import (
 
 router = APIRouter(prefix="/api", tags=["analyses"])
 
-# Upload limits (see PR description for reasoning).
+# Upload limits (see PR description for reasoning). Exposed at module level so
+# the borrower-files endpoint can reuse the same helper without importing
+# private constants.
 MAX_FILES = 10
 MAX_PAGES_PER_FILE = 100
 MAX_BYTES_PER_FILE = 10 * 1024 * 1024        # 10 MB
@@ -98,6 +100,35 @@ async def _analyze_files(request: Request, db: Session) -> models.Analysis:
         if stripped:
             text_supplement = stripped
 
+    validated = await validate_and_read_pdfs(raw_files)
+    files = [(name, data) for name, data, _pages in validated]
+
+    try:
+        financials = extract_financials_from_files(files, text_supplement=text_supplement)
+    except LLMError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    marker = "[uploaded files] " + ", ".join(name for name, _ in files)
+    if text_supplement:
+        marker += " (+ pasted-notes)"
+    return _run_downstream(financials, source_text=marker, db=db)
+
+
+# --------------------- shared PDF validation (helper) -------------------------
+async def validate_and_read_pdfs(
+    raw_files: list[UploadFile],
+) -> list[tuple[str, bytes, int]]:
+    """Validate and read a batch of uploaded PDF files. Enforces the full
+    validation contract (PDF content-type, %PDF- magic bytes, per-file size,
+    total size, file count, page count) and returns
+    `[(filename, bytes, page_count), ...]` on success.
+
+    Shared between:
+      - POST /api/analyze (multipart)
+      - POST /api/borrowers/{id}/files
+    so a single change to the validation rules covers both entry points."""
     if not raw_files:
         raise HTTPException(status_code=422, detail="Upload at least one PDF file.")
     if len(raw_files) > MAX_FILES:
@@ -106,7 +137,7 @@ async def _analyze_files(request: Request, db: Session) -> models.Analysis:
             detail=f"Too many files — the maximum is {MAX_FILES}.",
         )
 
-    files: list[tuple[str, bytes]] = []
+    result: list[tuple[str, bytes, int]] = []
     total_bytes = 0
     for uf in raw_files:
         name = uf.filename or "uploaded.pdf"
@@ -161,26 +192,22 @@ async def _analyze_files(request: Request, db: Session) -> models.Analysis:
                 ),
             )
 
-        files.append((name, data))
+        result.append((name, data, pages))
 
-    try:
-        financials = extract_financials_from_files(files, text_supplement=text_supplement)
-    except LLMError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    marker = "[uploaded files] " + ", ".join(name for name, _ in files)
-    if text_supplement:
-        marker += " (+ pasted-notes)"
-    return _run_downstream(financials, source_text=marker, db=db)
+    return result
 
 
 # ---------------------- shared downstream (code + memo) -----------------------
 def _run_downstream(
-    financials: dict, *, source_text: str, db: Session
+    financials: dict,
+    *,
+    source_text: str,
+    db: Session,
+    borrower_id: str | None = None,
 ) -> models.Analysis:
-    """Everything from `compute_ratios` onwards — identical for both paths."""
+    """Everything from `compute_ratios` onwards — identical for both direct
+    /api/analyze paths, and reused by the borrower-analyze endpoint (which
+    passes `borrower_id` so the persisted row joins the borrower's history)."""
     ratios = compute_ratios(financials)
     flags = detect_flags(financials, ratios)
     scoring = score_credit(ratios)
@@ -191,6 +218,7 @@ def _run_downstream(
         raise HTTPException(status_code=502, detail=str(e))
 
     record = models.Analysis(
+        borrower_id=borrower_id,
         company=financials.get("company") or "Unknown borrower",
         loan_request=financials.get("loanRequest"),
         decision=scoring["decision"],

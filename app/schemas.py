@@ -88,3 +88,57 @@ class AnalysisSummary(BaseModel):
     company: str
     decision: Decision
     score: int
+
+
+# --------------------------- borrower + file shapes ---------------------------
+# Borrower is the identity layer above analyses: a returning client's analyses
+# stack under one record, uploaded PDFs persist between visits, and history
+# accumulates rather than being required up front.
+
+class BorrowerCreate(BaseModel):
+    """POST /api/borrowers body."""
+    name: str
+    sector: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class FileSummary(BaseModel):
+    """Lightweight file metadata — never carries the raw bytes."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: str
+    page_count: int
+    size_bytes: int
+    uploaded_at: datetime
+
+
+class BorrowerSummary(BaseModel):
+    """Row on the borrower list. Rollups let the UI render 'N files · N
+    analyses · latest DECLINE 42/100' without needing a second fetch."""
+    id: str
+    name: str
+    sector: Optional[str] = None
+    created_at: datetime
+    file_count: int
+    analysis_count: int
+    latest_decision: Optional[Decision] = None
+    latest_score: Optional[int] = None
+
+
+class BorrowerDetail(BaseModel):
+    """Full borrower page: everything the UI needs to render the profile,
+    the uploaded files list, and the history of analyses."""
+    id: str
+    name: str
+    sector: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    files: list[FileSummary]
+    analyses: list[AnalysisSummary]
+
+
+class BorrowerAnalyzeRequest(BaseModel):
+    """POST /api/borrowers/{id}/analyze body: which stored files to feed into
+    the pipeline. All file_ids must belong to this borrower."""
+    file_ids: list[str]

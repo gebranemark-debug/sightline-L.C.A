@@ -1,15 +1,20 @@
 """FastAPI entrypoint. Creates tables on boot (fine for a small deploy — swap to
 Alembic migrations when the schema starts changing), wires CORS for the Vercel
-frontend, and mounts the API router."""
+frontend, and mounts the API routers."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .database import Base, engine
+from .database import Base, engine, ensure_analyses_borrower_id_column
 from . import models  # noqa: F401 - ensure models are registered before create_all
-from .routers import analyses
+from .routers import analyses, borrowers
 
 Base.metadata.create_all(bind=engine)
+# create_all creates missing TABLES but does not add missing COLUMNS to
+# existing ones. The nullable analyses.borrower_id column landed after the
+# initial deployment — this idempotent ALTER catches up existing databases
+# on both SQLite (dev) and Postgres (Railway).
+ensure_analyses_borrower_id_column()
 
 app = FastAPI(title="Sightline — SME Credit Copilot API", version="1.0.0")
 
@@ -22,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(analyses.router)
+app.include_router(borrowers.router)
 
 
 @app.get("/")
