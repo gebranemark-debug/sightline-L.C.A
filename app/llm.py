@@ -185,6 +185,18 @@ def generate_memo(f: dict[str, Any], r: dict[str, Any],
     flag_list = "\n".join("- " + x["text"] for x in flags) or "- None material"
     ocf_word = "positive" if (r["ocf"] or 0) >= 0 else "negative"
 
+    # If a knockout fired, the memo must open by naming it — the composite
+    # is only part of the story. Empty string when there's no knockout so
+    # the prompt stays unchanged in the normal case.
+    ko = scoring.get("knockout")
+    knockout_line = ""
+    if ko:
+        knockout_line = (
+            f"\nKnockout: a {ko['type']} knockout was triggered: {ko['reason']}. "
+            f"Open the memo by naming this — the composite score was "
+            f"{scoring['score']} but was overridden because {ko['reason']}."
+        )
+
     prompt = f"""You are a senior SME credit analyst. Write a concise internal \
 credit memo (about 280-340 words) using ONLY the figures provided. Do not \
 invent numbers. Use this exact structure with bold section labels:
@@ -208,7 +220,7 @@ Cash conversion cycle: {fmt_days(r['ccc'])} (DSO {fmt_days(r['dso'])}, DIO {fmt_
 Operating cash flow: {fmt_eur(r['ocf'])}
 Customer concentration: {fmt_pct(f.get('topCustomerShare'))}
 Loan-to-value (Debt/Collateral): {fmt_pct(r.get('ltv'))} (collateral {fmt_eur(f.get('collateralValue'))})
-Score: {scoring['score']}/100 -> {scoring['decision']}
+Score: {scoring['score']}/100 -> {scoring['decision']}{knockout_line}
 Red flags:
 {flag_list}"""
     try:

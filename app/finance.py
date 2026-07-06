@@ -13,6 +13,8 @@ Three stages:
 """
 from typing import Any, Optional
 
+# ---------------------------------- types -------------------------------------
+
 Number = Optional[float]
 
 
@@ -231,34 +233,123 @@ def _score_ltv(v: Number) -> int:
     return -15
 
 
-def score_credit(r: dict[str, Any]) -> dict[str, Any]:
+# ------------------------------ factor weights --------------------------------
+# The maximum positive / negative points each _score_* function can return.
+# Static — not computed from the scoring bodies. Exposed on Factor so the
+# implicit weighting is visible in the API contract; the frontend can render
+# each bar's scale against its own range rather than a shared ±25.
+MAX_POINTS: dict[str, tuple[int, int]] = {
+    "dscr":          (20, -25),
+    "lev":           (10, -20),
+    "liq":           (8,  -12),
+    "ccc":           (8,  -12),
+    "margin":        (8,  -18),
+    "growth":        (6,  -15),
+    "ocf":           (6,  -18),
+    "concentration": (0,  -15),
+    "ltv":           (6,  -15),
+}
+
+
+def _factor(key: str, label: str, value: str, points: int) -> dict[str, Any]:
+    """Build one factor row with the static weight range attached. Keeps the
+    factors list literal readable while ensuring max_positive / max_negative
+    stay in sync with MAX_POINTS."""
+    max_pos, max_neg = MAX_POINTS[key]
+    return {
+        "key": key, "label": label, "value": value, "points": points,
+        "max_positive": max_pos, "max_negative": max_neg,
+    }
+
+
+# ------------------------------- knockout gates -------------------------------
+# The composite score already weights factors implicitly, but a weighted sum
+# can average away a fatal flaw. Knockouts are hard/soft override gates that
+# fire on specific conditions regardless of the composite. Same pattern as
+# the EU reference scorecards.
+#
+# Hard knockouts force the decision to DECLINE. Soft caps the decision at
+# REVIEW: it only downgrades from APPROVE; a composite that was already
+# DECLINE stays DECLINE, but the knockout is still surfaced in the audit
+# trail. Score value is NEVER modified by a knockout — only the decision.
+def detect_knockouts(
+    r: dict[str, Any], f: dict[str, Any] | None = None,
+) -> Optional[dict[str, str]]:
+    """Return the first-fires-wins knockout dict, or None. Hard checks
+    come before the soft check so a scenario that trips both surfaces the
+    harder verdict. `f` (raw financials) is accepted for future checks
+    that reference fields not carried through the ratios dict; today all
+    checks work off `r`."""
+    del f  # unused today, reserved for future non-ratio checks
+
+    # Hard knockouts — order matters (first-fires-wins).
+    if r.get("dscr") is not None and r["dscr"] < 1.0:
+        return {"type": "hard",
+                "reason": "DSCR below 1.0× — cannot service debt"}
+    if r.get("debtToEbitda") is not None and r["debtToEbitda"] > 6.0:
+        return {"type": "hard",
+                "reason": "Leverage above 6× EBITDA — excessive"}
+    if r.get("ltv") is not None and r["ltv"] > 1.0:
+        return {"type": "hard",
+                "reason": "Loan-to-value above 100% — undercollateralized"}
+    if r.get("ocf") is not None and r["ocf"] < 0:
+        return {"type": "hard",
+                "reason": "Operating cash flow negative"}
+
+    # Soft knockout (concentration).
+    share = r.get("topCustomerShare")
+    if share is not None and share > 0.5:
+        return {"type": "soft",
+                "reason": "Single customer > 50% of revenue"}
+
+    return None
+
+
+def score_credit(
+    r: dict[str, Any], f: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     factors = [
-        {"key": "dscr", "label": "Debt service coverage (DSCR)",
-         "value": fmt_x(r["dscr"]), "points": _score_dscr(r["dscr"])},
-        {"key": "lev", "label": "Leverage (Debt/EBITDA)",
-         "value": fmt_x(r["debtToEbitda"]), "points": _score_leverage(r["debtToEbitda"])},
-        {"key": "liq", "label": "Liquidity (current ratio)",
-         "value": fmt_x(r["currentRatio"]), "points": _score_current(r["currentRatio"])},
-        {"key": "ccc", "label": "Cash conversion cycle",
-         "value": fmt_days(r["ccc"]), "points": _score_ccc(r["ccc"])},
-        {"key": "margin", "label": "Net margin",
-         "value": fmt_pct(r["netMargin"]), "points": _score_margin(r["netMargin"])},
-        {"key": "growth", "label": "Growth quality (AR vs revenue)",
-         "value": f'{fmt_pct(r["receivablesGrowth"])} / {fmt_pct(r["revenueGrowth"])}',
-         "points": _score_growth(r["receivablesGrowth"], r["revenueGrowth"])},
-        {"key": "ocf", "label": "Operating cash flow",
-         "value": ("Positive" if (r["ocf"] or 0) >= 0 else "Negative"),
-         "points": _score_ocf(r["ocf"])},
-        {"key": "concentration", "label": "Customer concentration",
-         "value": fmt_pct(r.get("topCustomerShare")),
-         "points": _score_concentration(r.get("topCustomerShare"))},
-        {"key": "ltv", "label": "Loan-to-value (Debt/Collateral)",
-         "value": fmt_pct(r.get("ltv")),
-         "points": _score_ltv(r.get("ltv"))},
+        _factor("dscr", "Debt service coverage (DSCR)",
+                fmt_x(r["dscr"]), _score_dscr(r["dscr"])),
+        _factor("lev", "Leverage (Debt/EBITDA)",
+                fmt_x(r["debtToEbitda"]), _score_leverage(r["debtToEbitda"])),
+        _factor("liq", "Liquidity (current ratio)",
+                fmt_x(r["currentRatio"]), _score_current(r["currentRatio"])),
+        _factor("ccc", "Cash conversion cycle",
+                fmt_days(r["ccc"]), _score_ccc(r["ccc"])),
+        _factor("margin", "Net margin",
+                fmt_pct(r["netMargin"]), _score_margin(r["netMargin"])),
+        _factor("growth", "Growth quality (AR vs revenue)",
+                f'{fmt_pct(r["receivablesGrowth"])} / {fmt_pct(r["revenueGrowth"])}',
+                _score_growth(r["receivablesGrowth"], r["revenueGrowth"])),
+        _factor("ocf", "Operating cash flow",
+                "Positive" if (r["ocf"] or 0) >= 0 else "Negative",
+                _score_ocf(r["ocf"])),
+        _factor("concentration", "Customer concentration",
+                fmt_pct(r.get("topCustomerShare")),
+                _score_concentration(r.get("topCustomerShare"))),
+        _factor("ltv", "Loan-to-value (Debt/Collateral)",
+                fmt_pct(r.get("ltv")),
+                _score_ltv(r.get("ltv"))),
     ]
 
-    score = max(0, min(100, 50 + sum(f["points"] for f in factors)))
-    decision = "APPROVE" if score >= 65 else "REVIEW" if score >= 45 else "DECLINE"
+    score = max(0, min(100, 50 + sum(fac["points"] for fac in factors)))
+    composite_decision = (
+        "APPROVE" if score >= 65 else "REVIEW" if score >= 45 else "DECLINE"
+    )
+
+    # Knockout gates override the composite decision (but never the score).
+    # A hard knockout forces DECLINE; a soft knockout caps at REVIEW so a
+    # composite that would have approved lands at REVIEW, but a composite
+    # that was already DECLINE stays DECLINE (the knockout is still
+    # surfaced for the audit trail).
+    knockout = detect_knockouts(r, f or {})
+    if knockout is not None and knockout["type"] == "hard":
+        decision = "DECLINE"
+    elif knockout is not None and knockout["type"] == "soft" and composite_decision == "APPROVE":
+        decision = "REVIEW"
+    else:
+        decision = composite_decision
 
     # Counterfactual on the single biggest drag — the actionable "what if".
     targets = {
@@ -284,4 +375,5 @@ def score_credit(r: dict[str, Any]) -> dict[str, Any]:
         )
 
     return {"score": score, "decision": decision,
-            "factors": factors, "counterfactual": counterfactual}
+            "factors": factors, "counterfactual": counterfactual,
+            "knockout": knockout}

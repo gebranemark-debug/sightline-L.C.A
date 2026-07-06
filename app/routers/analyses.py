@@ -26,7 +26,7 @@ from starlette.datastructures import UploadFile
 
 from .. import models, schemas
 from ..database import get_db
-from ..finance import compute_ratios, detect_flags, score_credit
+from ..finance import MAX_POINTS, compute_ratios, detect_flags, detect_knockouts, score_credit
 from ..llm import (
     LLMError,
     extract_financials,
@@ -229,6 +229,27 @@ def _find_or_create_borrower(name: str, db: Session) -> models.Borrower:
     return fresh
 
 
+# ------------------------------ hydration -------------------------------------
+# Neither Factor.max_positive/max_negative nor Analysis.knockout are persisted
+# in a dedicated column — the max fields are static per factor key (see
+# finance.MAX_POINTS), and the knockout is deterministic from the persisted
+# ratios + financials. Both are attached transiently at response time so
+# Pydantic can read them via `from_attributes`. This is what lets us ship
+# the feature without a models.py migration: existing rows (which lack the
+# max fields inside their factors JSON blob) surface the current values on
+# GET; existing rows that would trigger a knockout under today's logic
+# surface it too, without a data backfill.
+def _hydrate(record: models.Analysis) -> models.Analysis:
+    for factor in record.factors:
+        if "max_positive" not in factor:
+            key = factor.get("key")
+            max_pos, max_neg = MAX_POINTS.get(key, (0, 0))
+            factor["max_positive"] = max_pos
+            factor["max_negative"] = max_neg
+    record.knockout = detect_knockouts(record.ratios, record.financials)
+    return record
+
+
 # ---------------------- shared downstream (code + memo) -----------------------
 def _run_downstream(
     financials: dict,
@@ -247,7 +268,7 @@ def _run_downstream(
     write, no orphan window in which the analysis exists without its FK."""
     ratios = compute_ratios(financials)
     flags = detect_flags(financials, ratios)
-    scoring = score_credit(ratios)
+    scoring = score_credit(ratios, financials)
 
     try:
         memo = generate_memo(financials, ratios, flags, scoring)
@@ -283,7 +304,7 @@ def _run_downstream(
     db.add(record)
     db.commit()
     db.refresh(record)
-    return record
+    return _hydrate(record)
 
 
 @router.get("/analyses", response_model=list[schemas.AnalysisSummary])
@@ -320,7 +341,7 @@ def get_analysis(analysis_id: str, db: Session = Depends(get_db)):
     record = db.get(models.Analysis, analysis_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Analysis not found.")
-    return record
+    return _hydrate(record)
 
 
 @router.post(
@@ -370,4 +391,4 @@ def submit_oversight(
     db.add(record)
     db.commit()
     db.refresh(record)
-    return record
+    return _hydrate(record)
