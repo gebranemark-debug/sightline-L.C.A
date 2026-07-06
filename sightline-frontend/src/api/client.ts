@@ -3,6 +3,7 @@ import type { components } from "./types";
 export type AnalysisResult = components["schemas"]["AnalysisResult"];
 export type AnalysisSummary = components["schemas"]["AnalysisSummary"];
 export type Decision = AnalysisResult["decision"];
+export type OfficerAction = "CONFIRMED" | "OVERRIDDEN";
 export type BorrowerSummary = components["schemas"]["BorrowerSummary"];
 export type BorrowerDetail = components["schemas"]["BorrowerDetail"];
 export type BorrowerCreate = components["schemas"]["BorrowerCreate"];
@@ -152,6 +153,35 @@ export async function analyzeBorrower(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file_ids: fileIds }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractErrorMessage(res));
+  return (await res.json()) as AnalysisResult;
+}
+
+// ------------------------------ oversight -------------------------------------
+
+/**
+ * POST /api/analyses/{id}/oversight — records the officer's action
+ * (CONFIRMED or OVERRIDDEN) as metadata on the analysis. The scorecard's
+ * decision + score are never mutated — this is Article 14 metadata layered
+ * on top. Returns the updated AnalysisResult with the three officer_*
+ * fields populated, which the caller uses to drive its result state.
+ *
+ * `note` is required server-side for OVERRIDDEN (422 on empty/whitespace).
+ * HumanOversight gates the button client-side too, so this rarely surfaces.
+ */
+export async function submitOversight(
+  analysisId: string,
+  action: OfficerAction,
+  note?: string,
+): Promise<AnalysisResult> {
+  const res = await fetch(
+    `${API_BASE}/api/analyses/${encodeURIComponent(analysisId)}/oversight`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, note: note ?? null }),
     },
   );
   if (!res.ok) throw new Error(await extractErrorMessage(res));

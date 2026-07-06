@@ -74,7 +74,10 @@ export function AnalysesTimeline({ analyses }: Props) {
                   <p className="text-xs text-decision-red">{error}</p>
                 )}
                 {expandedResult && expandedResult.id === a.id && (
-                  <ResultPanels result={expandedResult} />
+                  <ResultPanels
+                    result={expandedResult}
+                    onOversightUpdated={setExpandedResult}
+                  />
                 )}
               </div>
             )}
