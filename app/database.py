@@ -1,6 +1,6 @@
 """SQLAlchemy engine + session. Works with SQLite (local) and Postgres (deploy)
 with no code change — only the DATABASE_URL differs."""
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import settings
@@ -20,3 +20,31 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def ensure_analyses_borrower_id_column() -> None:
+    """Idempotent ALTER to add analyses.borrower_id on existing databases.
+
+    Tables are created with `Base.metadata.create_all(engine)` at startup, which
+    creates missing tables but does not add missing columns to existing ones —
+    so the deployed Railway `analyses` table needs an explicit ALTER to grow
+    the nullable FK. Called once from main.py after create_all; idempotent so
+    subsequent boots are no-ops. Dialect-aware because SQLite does not accept
+    `ADD COLUMN IF NOT EXISTS` while Postgres does.
+    """
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        if dialect == "sqlite":
+            # SQLite: no IF NOT EXISTS on ALTER — check PRAGMA first.
+            existing = {row[1] for row in conn.execute(
+                text("PRAGMA table_info(analyses)")
+            ).fetchall()}
+            if "borrower_id" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE analyses ADD COLUMN borrower_id VARCHAR"
+                ))
+        else:
+            # Postgres (and anything else supporting the syntax).
+            conn.execute(text(
+                "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS borrower_id VARCHAR"
+            ))

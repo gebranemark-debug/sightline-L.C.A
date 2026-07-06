@@ -174,4 +174,119 @@ print(f"  POST /api/analyze (empty PDF) -> {empty.status_code} (expected 415)")
 assert empty.status_code == 415, empty.json()  # empty file fails magic-byte check
 
 
+# --- Borrower endpoints (LLM stubbed) ---
+print("\n=== 4. Borrower + file endpoints (LLM stubbed) ===")
+from app.routers import borrowers as borrowers_mod  # noqa: E402
+
+# Borrower analyze uses the same extract_financials_from_files as the
+# multipart path — stub it on the borrowers module too.
+borrowers_mod.extract_financials_from_files = fake_extract_from_files
+
+# 4.1 create
+cb = client.post("/api/borrowers", json={
+    "name": "Cascade Home Retail Ltd", "sector": "Retail",
+    "notes": "Existing wholesale expansion; watch receivables trend.",
+})
+print(f"  POST /api/borrowers -> {cb.status_code}")
+assert cb.status_code == 200, cb.json()
+bsum = cb.json()
+assert bsum["name"] == "Cascade Home Retail Ltd"
+assert bsum["file_count"] == 0 and bsum["analysis_count"] == 0
+assert bsum["latest_decision"] is None
+borrower_id = bsum["id"]
+
+# 4.2 list
+bl = client.get("/api/borrowers")
+print(f"  GET /api/borrowers -> {bl.status_code}, {len(bl.json())} borrower(s)")
+assert bl.status_code == 200 and len(bl.json()) == 1
+assert bl.json()[0]["name"] == "Cascade Home Retail Ltd"
+
+# 4.3 files: upload two PDFs — reuses validate_and_read_pdfs, must reject non-PDF
+uf = client.post(
+    f"/api/borrowers/{borrower_id}/files",
+    files=[
+        ("files", ("application.pdf", _make_tiny_pdf(), "application/pdf")),
+        ("files", ("statements.pdf",  _make_tiny_pdf(), "application/pdf")),
+    ],
+)
+print(f"  POST /api/borrowers/{{id}}/files -> {uf.status_code}, {len(uf.json())} file(s)")
+assert uf.status_code == 200, uf.json()
+files_meta = uf.json()
+assert len(files_meta) == 2
+assert files_meta[0]["filename"] == "application.pdf"
+assert files_meta[0]["page_count"] == 1
+assert files_meta[0]["size_bytes"] > 0
+file_ids = [f["id"] for f in files_meta]
+
+# Non-PDF still rejected on the borrower endpoint (helper is shared).
+rej_b = client.post(
+    f"/api/borrowers/{borrower_id}/files",
+    files=[("files", ("readme.txt", b"nope", "text/plain"))],
+)
+print(f"  POST /api/borrowers/{{id}}/files (non-PDF) -> {rej_b.status_code} (expected 415)")
+assert rej_b.status_code == 415, rej_b.json()
+
+# Missing borrower on /files gets an explicit 404 BEFORE the validation loop.
+uf_missing = client.post(
+    "/api/borrowers/does-not-exist/files",
+    files=[("files", ("x.pdf", _make_tiny_pdf(), "application/pdf"))],
+)
+print(f"  POST /api/borrowers/missing/files -> {uf_missing.status_code} (expected 404)")
+assert uf_missing.status_code == 404, uf_missing.json()
+assert uf_missing.json()["detail"] == "Borrower not found."
+
+# 4.4 analyze the borrower using the stored file_ids
+ab = client.post(
+    f"/api/borrowers/{borrower_id}/analyze",
+    json={"file_ids": file_ids},
+)
+print(f"  POST /api/borrowers/{{id}}/analyze -> {ab.status_code}")
+assert ab.status_code == 200, ab.json()
+a_data = ab.json()
+assert a_data["decision"] == "DECLINE"
+assert a_data["score"] == 0
+assert a_data["counterfactual"]
+
+# Missing borrower on /analyze gets an explicit 404 BEFORE the file_ids lookup.
+ab_missing = client.post(
+    "/api/borrowers/does-not-exist/analyze",
+    json={"file_ids": file_ids},
+)
+print(f"  POST /api/borrowers/missing/analyze -> {ab_missing.status_code} (expected 404)")
+assert ab_missing.status_code == 404, ab_missing.json()
+assert ab_missing.json()["detail"] == "Borrower not found."
+
+# file_ids that don't belong to this borrower → 404 with a helpful message.
+ab_bad_files = client.post(
+    f"/api/borrowers/{borrower_id}/analyze",
+    json={"file_ids": ["not-a-real-file"]},
+)
+print(f"  POST /api/borrowers/{{id}}/analyze (bad file_ids) -> {ab_bad_files.status_code} (expected 404)")
+assert ab_bad_files.status_code == 404, ab_bad_files.json()
+assert "not found" in ab_bad_files.json()["detail"]
+
+# 4.5 detail: borrower page now surfaces the files + the analysis, newest-first
+bd = client.get(f"/api/borrowers/{borrower_id}")
+print(f"  GET /api/borrowers/{{id}} -> {bd.status_code}")
+assert bd.status_code == 200
+detail = bd.json()
+assert detail["name"] == "Cascade Home Retail Ltd"
+assert len(detail["files"]) == 2
+assert len(detail["analyses"]) == 1
+assert detail["analyses"][0]["decision"] == "DECLINE"
+
+# Rollups on the list reflect the new files + analysis.
+bl2 = client.get("/api/borrowers")
+row = bl2.json()[0]
+print(f"     rollups: files={row['file_count']} analyses={row['analysis_count']} "
+      f"latest={row['latest_decision']} {row['latest_score']}/100")
+assert row["file_count"] == 2 and row["analysis_count"] == 1
+assert row["latest_decision"] == "DECLINE" and row["latest_score"] == 0
+
+# GET /api/borrowers on an unknown id → 404
+missing_b = client.get("/api/borrowers/does-not-exist")
+print(f"  GET /api/borrowers/does-not-exist -> {missing_b.status_code} (expected 404)")
+assert missing_b.status_code == 404
+
+
 print("\nALL CHECKS PASSED ✅")
