@@ -36,13 +36,17 @@ from ..llm import (
 
 router = APIRouter(prefix="/api", tags=["analyses"])
 
-# Upload limits (see PR description for reasoning). Exposed at module level so
-# the borrower-files endpoint can reuse the same helper without importing
-# private constants.
-MAX_FILES = 10
+# Upload limits. Sized for real corporate loan files — a full package can run
+# 30-50 PDFs (application + statements + tax returns + appraisals + covenant
+# certificates + supplier contracts…). Per-file caps stay tight because
+# they're the model's structural limits, not ours: Anthropic caps document
+# blocks at 100 pages, and 10 MB is generous for a well-compressed scan of a
+# 100-page annual report. Exposed at module level so the borrower-files
+# endpoint can reuse the same helper without importing private constants.
+MAX_FILES = 60
 MAX_PAGES_PER_FILE = 100
-MAX_BYTES_PER_FILE = 10 * 1024 * 1024        # 10 MB
-MAX_BYTES_TOTAL = 30 * 1024 * 1024           # 30 MB
+MAX_BYTES_PER_FILE = 10 * 1024 * 1024         # 10 MB
+MAX_BYTES_TOTAL = 100 * 1024 * 1024           # 100 MB
 
 
 @router.get("/health")

@@ -22,9 +22,9 @@ type Props = {
   existingBytes?: number;
 };
 
-const DEFAULT_MAX_FILES = 10;
+const DEFAULT_MAX_FILES = 60;
 const DEFAULT_MAX_BYTES_PER_FILE = 10 * 1024 * 1024;
-const DEFAULT_MAX_BYTES_TOTAL = 30 * 1024 * 1024;
+const DEFAULT_MAX_BYTES_TOTAL = 100 * 1024 * 1024;
 const DEFAULT_MAX_PAGES_PER_FILE = 100;
 
 export function DropZone({
