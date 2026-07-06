@@ -45,7 +45,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Analyses */
+        /**
+         * List Analyses
+         * @description Recent analyses, filtered.
+         *
+         *     Both filters are optional and compose:
+         *       decision=REVIEW              -> only REVIEW rows
+         *       unattached=true              -> only rows with borrower_id IS NULL
+         *       decision=REVIEW&unattached=true -> the queue view used by Under review /
+         *                                         Declined tabs on the frontend
+         */
         get: operations["list_analyses_api_analyses_get"];
         put?: never;
         post?: never;
@@ -66,6 +75,81 @@ export interface paths {
         get: operations["get_analysis_api_analyses__analysis_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/borrowers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Borrowers
+         * @description List borrowers with rollup counts + latest verdict. Two subqueries for
+         *     the counts, one per-borrower lookup for the latest analysis — good enough
+         *     for demo/dev volumes; we can move to a single windowed query when this
+         *     starts to matter.
+         */
+        get: operations["list_borrowers_api_borrowers_get"];
+        put?: never;
+        /** Create Borrower */
+        post: operations["create_borrower_api_borrowers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/borrowers/{borrower_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Borrower */
+        get: operations["get_borrower_api_borrowers__borrower_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/borrowers/{borrower_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Borrower Files */
+        post: operations["upload_borrower_files_api_borrowers__borrower_id__files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/borrowers/{borrower_id}/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Analyze Borrower */
+        post: operations["analyze_borrower_api_borrowers__borrower_id__analyze_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -150,6 +234,77 @@ export interface components {
             score: number;
         };
         /**
+         * BorrowerAnalyzeRequest
+         * @description POST /api/borrowers/{id}/analyze body: which stored files to feed into
+         *     the pipeline. All file_ids must belong to this borrower.
+         */
+        BorrowerAnalyzeRequest: {
+            /** File Ids */
+            file_ids: string[];
+        };
+        /**
+         * BorrowerCreate
+         * @description POST /api/borrowers body.
+         */
+        BorrowerCreate: {
+            /** Name */
+            name: string;
+            /** Sector */
+            sector?: string | null;
+            /** Notes */
+            notes?: string | null;
+        };
+        /**
+         * BorrowerDetail
+         * @description Full borrower page: everything the UI needs to render the profile,
+         *     the uploaded files list, and the history of analyses.
+         */
+        BorrowerDetail: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Files */
+            files: components["schemas"]["FileSummary"][];
+            /** Analyses */
+            analyses: components["schemas"]["AnalysisSummary"][];
+        };
+        /**
+         * BorrowerSummary
+         * @description Row on the borrower list. Rollups let the UI render 'N files · N
+         *     analyses · latest DECLINE 42/100' without needing a second fetch.
+         */
+        BorrowerSummary: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** File Count */
+            file_count: number;
+            /** Analysis Count */
+            analysis_count: number;
+            /** Latest Decision */
+            latest_decision?: ("APPROVE" | "REVIEW" | "DECLINE") | null;
+            /** Latest Score */
+            latest_score?: number | null;
+        };
+        /**
          * Factor
          * @description One contribution to the scorecard from finance.score_credit. `points`
          *     can be negative (drag) or positive (boost) — this is the explainability
@@ -164,6 +319,25 @@ export interface components {
             value: string;
             /** Points */
             points: number;
+        };
+        /**
+         * FileSummary
+         * @description Lightweight file metadata — never carries the raw bytes.
+         */
+        FileSummary: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Page Count */
+            page_count: number;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Uploaded At
+             * Format: date-time
+             */
+            uploaded_at: string;
         };
         /**
          * Flag
@@ -284,6 +458,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                decision?: ("APPROVE" | "REVIEW" | "DECLINE") | null;
+                unattached?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -321,6 +497,167 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_borrowers_api_borrowers_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BorrowerSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_borrower_api_borrowers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BorrowerCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BorrowerSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_borrower_api_borrowers__borrower_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                borrower_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BorrowerDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_borrower_files_api_borrowers__borrower_id__files_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                borrower_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    analyze_borrower_api_borrowers__borrower_id__analyze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                borrower_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BorrowerAnalyzeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
