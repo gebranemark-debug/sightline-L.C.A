@@ -1,12 +1,20 @@
 """The LLM layer — the only place the Anthropic API key is used.
 
-Two responsibilities, both *language* tasks:
-  extract_financials  reads a messy loan file -> clean structured JSON
-  generate_memo       turns the computed numbers -> a readable credit memo
+Three responsibilities, all *language* tasks:
+  extract_financials             read a text loan file  -> clean structured JSON
+  extract_financials_from_files  read PDFs (+ optional  -> clean structured JSON
+                                 pasted-notes supplement)
+  generate_memo                  turn computed numbers  -> readable credit memo
 
 Everything numeric happens in finance.py, not here. The model is given the
 already-computed figures for the memo so it can never invent numbers.
+
+Model routing (see app.config):
+  extract_financials             uses settings.text_model  (Opus by default)
+  extract_financials_from_files  uses settings.pdf_model   (Sonnet 4.5 by default)
+  generate_memo                  uses settings.text_model  (prose, no PDFs)
 """
+import base64
 import json
 from typing import Any
 
@@ -38,17 +46,13 @@ def _text(message: Any) -> str:
     ).strip()
 
 
-def extract_financials(doc_text: str) -> dict[str, Any]:
-    """LLM call #1 — structure the document. Returns a dict matching the schema
-    finance.py expects. Raises ValueError if the output can't be parsed."""
-    client = _get_client()
-    prompt = f"""You are a data-extraction engine for credit analysis. Read the \
-loan file below and return ONLY a JSON object — no prose, no markdown fences. \
-Use numbers only (no currency symbols, no commas). If a value is genuinely \
-absent, use null.
+# --------------------------- shared extraction prompt --------------------------
+_EXTRACT_SCHEMA_BLOCK = """Return ONLY a JSON object — no prose, no markdown \
+fences. Use numbers only (no currency symbols, no commas). If a value is \
+genuinely absent, use null.
 
 Schema:
-{{
+{
   "company": string,
   "loanRequest": number,
   "revenueCurrent": number, "revenuePrior": number,
@@ -65,7 +69,7 @@ Schema:
   "debtService": number, "operatingCashFlow": number,
   "topCustomerShare": number,
   "collateralValue": number
-}}
+}
 
 Notes on the last two fields:
 - topCustomerShare is a DECIMAL (0.38 for 38%). If the file says something \
@@ -74,22 +78,13 @@ like "one client represents 38% of revenue" or "top customer accounts for \
 use null.
 - collateralValue is total pledged collateral in EUR (equipment appraisal, \
 fleet valuation, real estate, etc.). Use null for unsecured facilities such \
-as working-capital revolvers.
+as working-capital revolvers."""
 
-LOAN FILE:
-\"\"\"
-{doc_text}
-\"\"\""""
-    try:
-        msg = client.messages.create(
-            model=settings.anthropic_model,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except Exception as e:  # noqa: BLE001 - surface any SDK/transport error cleanly
-        raise LLMError(f"Extraction request failed: {e}") from e
 
-    raw = _text(msg).replace("```json", "").replace("```", "").strip()
+def _parse_json_response(raw_text: str) -> dict[str, Any]:
+    """Strip any accidental markdown fences, then load. Shared by both
+    extract functions so JSON parsing quirks are handled in one place."""
+    raw = raw_text.replace("```json", "").replace("```", "").strip()
     start, end = raw.find("{"), raw.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("Could not read structured financials from that file.")
@@ -102,6 +97,87 @@ LOAN FILE:
         ) from e
 
 
+# ------------------------------- text pipeline --------------------------------
+def extract_financials(doc_text: str) -> dict[str, Any]:
+    """LLM call #1 for the text pipeline. Returns a dict matching the schema
+    finance.py expects. Raises ValueError if the output can't be parsed."""
+    client = _get_client()
+    prompt = (
+        "You are a data-extraction engine for credit analysis. Read the loan "
+        f"file below and return the JSON described.\n\n{_EXTRACT_SCHEMA_BLOCK}\n\n"
+        f'LOAN FILE:\n"""\n{doc_text}\n"""'
+    )
+    try:
+        msg = client.messages.create(
+            model=settings.text_model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as e:  # noqa: BLE001 - surface any SDK/transport error cleanly
+        raise LLMError(f"Extraction request failed: {e}") from e
+    return _parse_json_response(_text(msg))
+
+
+# ------------------------------- PDF pipeline ---------------------------------
+def extract_financials_from_files(
+    files: list[tuple[str, bytes]],
+    text_supplement: str | None = None,
+) -> dict[str, Any]:
+    """LLM call #1 for the PDF pipeline. `files` is a list of (filename, bytes)
+    tuples. `text_supplement` is optional pasted-notes text sent alongside.
+
+    Each PDF becomes a `document` content block sent to Claude with a title
+    that matches the filename listed in the prompt, so Claude can reason about
+    which figures came from which file. The pasted-notes supplement, if any,
+    is wrapped with the same `--- FILE: pasted-notes ---` marker to keep the
+    file-separator convention uniform across the whole extraction prompt.
+    """
+    if not files:
+        raise ValueError("No PDF files provided.")
+
+    client = _get_client()
+
+    filenames = [name for name, _ in files]
+    listed = "\n".join(f"--- FILE: {name} ---" for name in filenames)
+    if text_supplement:
+        listed += "\n--- FILE: pasted-notes ---"
+
+    prompt_text = (
+        "You are a data-extraction engine for credit analysis. You are given "
+        f"the following loan files, which together describe one borrower:\n\n"
+        f"{listed}\n\n"
+        f"Read them together as a single logical loan file. {_EXTRACT_SCHEMA_BLOCK}"
+    )
+
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+    for name, data in files:
+        content.append({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(data).decode("ascii"),
+            },
+            "title": name,
+        })
+    if text_supplement:
+        content.append({
+            "type": "text",
+            "text": f"--- FILE: pasted-notes ---\n{text_supplement}",
+        })
+
+    try:
+        msg = client.messages.create(
+            model=settings.pdf_model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": content}],
+        )
+    except Exception as e:  # noqa: BLE001
+        raise LLMError(f"Extraction request failed: {e}") from e
+    return _parse_json_response(_text(msg))
+
+
+# --------------------------------- memo ---------------------------------------
 def generate_memo(f: dict[str, Any], r: dict[str, Any],
                   flags: list[dict[str, str]], scoring: dict[str, Any]) -> str:
     """LLM call #2 — draft the memo, grounded strictly in the numbers we pass."""
@@ -137,7 +213,7 @@ Red flags:
 {flag_list}"""
     try:
         msg = client.messages.create(
-            model=settings.anthropic_model,
+            model=settings.text_model,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
