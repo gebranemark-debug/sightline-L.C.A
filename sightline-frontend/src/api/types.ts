@@ -149,11 +149,6 @@ export interface components {
             /** Score */
             score: number;
         };
-        /** AnalyzeRequest */
-        AnalyzeRequest: {
-            /** Text */
-            text: string;
-        };
         /**
          * Factor
          * @description One contribution to the scorecard from finance.score_credit. `points`
@@ -272,11 +267,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AnalyzeRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -285,15 +276,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalysisResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

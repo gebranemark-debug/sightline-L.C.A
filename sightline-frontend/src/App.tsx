@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ScrollText, ShieldCheck } from "lucide-react";
-import { analyze, type AnalysisResult } from "./api/client";
+import type { AnalysisResult } from "./api/client";
 import { InputPanel } from "./features/input/InputPanel";
 import { DecisionHeader } from "./features/result/DecisionHeader";
 import { FactorsPanel } from "./features/result/FactorsPanel";
@@ -13,24 +13,28 @@ import { DEMO_RESULT } from "./lib/demo-result";
 
 // Thin shell. All layout, state, and orchestration live here; every visual
 // atom is in features/ or components/.
+//
+// Runner-based submit: InputPanel decides which client function to call
+// (analyze vs analyzeFiles) and hands us back a closure that fires the actual
+// request. We stash the closure in a ref so Retry re-fires the same request
+// with the same files / text — no state duplication here about which path was
+// taken.
+
+type Runner = () => Promise<AnalysisResult>;
 
 export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // First load shows the demo Cascade result so the app never boots empty.
-  // Cleared to null on tab switch or Analyse click.
   const [result, setResult] = useState<AnalysisResult | null>(DEMO_RESULT);
-  // Kept in a ref (not state) because it's only read on retry — no need to
-  // trigger a re-render when it changes.
-  const lastText = useRef<string>("");
+  const lastRunner = useRef<Runner | null>(null);
 
-  async function handleAnalyze(text: string) {
-    lastText.current = text;
+  async function runSubmit(runner: Runner) {
+    lastRunner.current = runner;
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      setResult(await analyze(text));
+      setResult(await runner());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -39,7 +43,7 @@ export default function App() {
   }
 
   function retry() {
-    if (lastText.current) handleAnalyze(lastText.current);
+    if (lastRunner.current) runSubmit(lastRunner.current);
   }
 
   function reset() {
@@ -47,8 +51,6 @@ export default function App() {
     setError(null);
   }
 
-  // Precedence: loading > error > empty > result. A live request always beats
-  // a stale error card; a stale error beats an empty hint.
   const rightColumn = loading ? (
     <RunningState />
   ) : error ? (
@@ -94,7 +96,7 @@ export default function App() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="lg:col-span-2">
           <InputPanel
-            onAnalyze={handleAnalyze}
+            onSubmit={runSubmit}
             onReset={reset}
             loading={loading}
             hasResult={result !== null}
