@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import { ScrollText } from "lucide-react";
+import { AttributionBadge } from "../../components/AttributionBadge";
 import { Panel } from "../../components/Panel";
 
 // The memo comes back as markdown-ish prose: section headers wrapped in
@@ -24,7 +25,11 @@ export function MemoPanel({ memo }: { memo: string }) {
   const lines = memo.split("\n");
 
   return (
-    <Panel title="Credit memo" icon={<ScrollText size={18} />}>
+    <Panel
+      title="Credit memo"
+      icon={<ScrollText size={18} />}
+      attribution={<AttributionBadge variant="opus" />}
+    >
       <div>
         {lines.map((line, i) => {
           const trimmed = line.trim();
