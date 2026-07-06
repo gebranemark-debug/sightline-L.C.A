@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # set keep working without a service-vars edit.
     anthropic_model: str = "claude-opus-4-7"
     anthropic_model_text: str | None = None
-    anthropic_model_pdf: str = "claude-sonnet-4-5-20250929"
+    anthropic_model_pdf: str = "claude-sonnet-5"
 
     # Comma-separated list of allowed frontend origins.
     cors_origins: str = "http://localhost:5173"
