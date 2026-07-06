@@ -42,6 +42,11 @@ export function RatiosGrid({ ratios }: { ratios: AnalysisResult["ratios"] }) {
           hint={`DSO ${days(ratios.dso)} · DPO ${days(ratios.dpo)}`}
         />
         <Ratio label="Op. cash flow" value={eur(ratios.ocf)} hint={ocfHint} />
+        <Ratio
+          label="LTV"
+          value={pct(ratios.ltv)}
+          hint="Debt / Collateral"
+        />
       </div>
     </Panel>
   );

@@ -38,7 +38,10 @@ AP: 410,000
 Total debt: 1,150,000 | Equity: 1,480,000
 
 Annual debt service: 330,000
-Operating cash flow: 450,000`,
+Operating cash flow: 450,000
+
+COLLATERAL
+Facility is secured on the existing fleet, most recently appraised at EUR 1,800,000.`,
   },
   {
     key: "cascade",
@@ -96,7 +99,10 @@ Total debt: 1,280,000 | Equity: 940,000
 Annual debt service: 310,000
 Operating cash flow: 230,000
 
-Order book steady; one automotive client represents 38% of revenue (concentration risk).`,
+Order book steady; one automotive client represents 38% of revenue (concentration risk).
+
+COLLATERAL
+Facility is secured on the existing machinery and CNC equipment, appraised at EUR 1,600,000.`,
   },
 ];
 
