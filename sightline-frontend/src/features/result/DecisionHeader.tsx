@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import type { AnalysisResult } from "../../api/client";
+import { AttributionBadge } from "../../components/AttributionBadge";
 import { eur } from "../../lib/format";
 
 const STYLES = {
@@ -45,6 +46,9 @@ export function DecisionHeader({ result }: { result: AnalysisResult }) {
             <span className="text-[15px] text-muted">/100</span>
           </div>
           <div className="text-[11px] text-muted">risk score</div>
+          <div className="mt-1">
+            <AttributionBadge variant="code" />
+          </div>
         </div>
       </div>
     </div>

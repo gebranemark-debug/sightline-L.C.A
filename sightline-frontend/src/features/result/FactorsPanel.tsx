@@ -1,5 +1,6 @@
 import { Calculator } from "lucide-react";
 import type { AnalysisResult } from "../../api/client";
+import { AttributionBadge } from "../../components/AttributionBadge";
 import { FactorBar } from "../../components/FactorBar";
 import { Panel } from "../../components/Panel";
 
@@ -29,7 +30,11 @@ export function FactorsPanel({
     title ?? (variant === "delta" ? "Δ vs prior" : "Why — decision factors");
 
   return (
-    <Panel title={resolvedTitle} icon={<Calculator size={18} />}>
+    <Panel
+      title={resolvedTitle}
+      icon={<Calculator size={18} />}
+      attribution={<AttributionBadge variant="code" />}
+    >
       <div className="flex flex-col gap-2.5">
         {factors.map((f) => (
           <div

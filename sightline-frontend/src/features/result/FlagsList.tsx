@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { AnalysisResult } from "../../api/client";
+import { AttributionBadge } from "../../components/AttributionBadge";
 import { Panel } from "../../components/Panel";
 
 export function FlagsList({ flags }: { flags: AnalysisResult["flags"] }) {
@@ -11,6 +12,7 @@ export function FlagsList({ flags }: { flags: AnalysisResult["flags"] }) {
       title={`Red flags (${flags.length})`}
       icon={<AlertTriangle size={18} />}
       accentClass={accentClass}
+      attribution={<AttributionBadge variant="code" />}
     >
       {flags.length === 0 ? (
         <div className="flex items-center gap-2 text-[13px] text-decision-green">

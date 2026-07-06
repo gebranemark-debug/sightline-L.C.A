@@ -1,5 +1,6 @@
 import { Calculator } from "lucide-react";
 import type { AnalysisResult } from "../../api/client";
+import { AttributionBadge } from "../../components/AttributionBadge";
 import { Panel } from "../../components/Panel";
 import { Ratio } from "../../components/Ratio";
 import { days, eur, pct, x1 } from "../../lib/format";
@@ -13,7 +14,11 @@ export function RatiosGrid({ ratios }: { ratios: AnalysisResult["ratios"] }) {
         : "negative";
 
   return (
-    <Panel title="Cash flow & ratios" icon={<Calculator size={18} />}>
+    <Panel
+      title="Cash flow & ratios"
+      icon={<Calculator size={18} />}
+      attribution={<AttributionBadge variant="code" />}
+    >
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
         <Ratio
           label="DSCR"
