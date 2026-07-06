@@ -112,4 +112,18 @@ class Analysis(Base):
     memo = Column(Text, nullable=False)          # LLM-drafted memo
     source_text = Column(Text, nullable=False)   # the raw input, kept for the record
 
+    # Human oversight (EU AI Act Article 14). The scorecard's decision + score
+    # stay untouched — these are metadata layered on top: whether the officer
+    # agreed with the model ("CONFIRMED") or disagreed and routed to
+    # committee ("OVERRIDDEN"), and the reason on override.
+    # All nullable so existing rows (pre-feature) stay valid with these
+    # fields as None; the UI renders that as "Awaiting review".
+    # TODO: When we add auth, capture officer identity here (currently
+    # anonymous). Post-demo we'd also swap this single-shot record for an
+    # append-only oversight_events table so the full review history is
+    # queryable, not just the last action.
+    officer_action = Column(String, nullable=True)   # CONFIRMED | OVERRIDDEN
+    officer_note = Column(Text, nullable=True)       # required for OVERRIDDEN
+    officer_action_at = Column(DateTime, nullable=True)
+
     borrower = relationship("Borrower", back_populates="analyses")

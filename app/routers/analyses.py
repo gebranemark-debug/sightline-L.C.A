@@ -11,6 +11,7 @@ The JSON+text branch is deliberately kept byte-identical to the previous
 implementation so the deployed Vercel frontend continues to work during the
 backend-first deploy window."""
 import uuid
+from datetime import datetime, timezone
 from io import BytesIO
 from json import JSONDecodeError
 from typing import Literal
@@ -315,4 +316,54 @@ def get_analysis(analysis_id: str, db: Session = Depends(get_db)):
     record = db.get(models.Analysis, analysis_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Analysis not found.")
+    return record
+
+
+@router.post(
+    "/analyses/{analysis_id}/oversight",
+    response_model=schemas.AnalysisResult,
+)
+def submit_oversight(
+    analysis_id: str,
+    payload: schemas.OversightRequest,
+    db: Session = Depends(get_db),
+):
+    """EU AI Act Article 14: the officer decides what the model's output
+    counts for, not what it says. This endpoint records that decision as
+    metadata layered over the analysis — the scorecard's decision + score
+    remain byte-identical to what compute/score produced.
+
+    One-shot per analysis for the demo. TODO: post-demo, move to an
+    append-only oversight_events table so the full review history is
+    queryable (multiple officers, second reviews, appeals, etc.).
+    """
+    record = db.get(models.Analysis, analysis_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Analysis not found.")
+
+    if record.officer_action is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This analysis has already been reviewed.",
+        )
+
+    if payload.action == "OVERRIDDEN":
+        note = (payload.note or "").strip()
+        if not note:
+            raise HTTPException(
+                status_code=422,
+                detail="An override requires a reason.",
+            )
+        record.officer_note = note
+    else:
+        # CONFIRMED: note is ignored silently so a UI that always sends the
+        # field can still call the endpoint without special-casing.
+        record.officer_note = None
+
+    record.officer_action = payload.action
+    record.officer_action_at = datetime.now(timezone.utc)
+
+    db.add(record)
+    db.commit()
+    db.refresh(record)
     return record
