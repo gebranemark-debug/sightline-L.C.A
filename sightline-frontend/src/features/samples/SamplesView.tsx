@@ -47,7 +47,7 @@ export function SamplesView() {
   ) : error ? (
     <ErrorState message={error} onRetry={retry} />
   ) : result ? (
-    <ResultPanels result={result} />
+    <ResultPanels result={result} onOversightUpdated={setResult} />
   ) : (
     <EmptyState />
   );

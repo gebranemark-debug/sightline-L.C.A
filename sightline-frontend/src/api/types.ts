@@ -81,6 +81,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analyses/{analysis_id}/oversight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Oversight
+         * @description EU AI Act Article 14: the officer decides what the model's output
+         *     counts for, not what it says. This endpoint records that decision as
+         *     metadata layered over the analysis — the scorecard's decision + score
+         *     remain byte-identical to what compute/score produced.
+         *
+         *     One-shot per analysis for the demo. TODO: post-demo, move to an
+         *     append-only oversight_events table so the full review history is
+         *     queryable (multiple officers, second reviews, appeals, etc.).
+         */
+        post: operations["submit_oversight_api_analyses__analysis_id__oversight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/borrowers": {
         parameters: {
             query?: never;
@@ -210,6 +237,12 @@ export interface components {
             counterfactual?: string | null;
             /** Memo */
             memo: string;
+            /** Officer Action */
+            officer_action?: ("CONFIRMED" | "OVERRIDDEN") | null;
+            /** Officer Note */
+            officer_note?: string | null;
+            /** Officer Action At */
+            officer_action_at?: string | null;
         };
         /**
          * AnalysisSummary
@@ -358,6 +391,20 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * OversightRequest
+         * @description POST /api/analyses/{id}/oversight body. `note` is required for
+         *     OVERRIDDEN and ignored for CONFIRMED (endpoint drops it silently).
+         */
+        OversightRequest: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "CONFIRMED" | "OVERRIDDEN";
+            /** Note */
+            note?: string | null;
+        };
+        /**
          * Ratios
          * @description The credit ratios computed by finance.compute_ratios. All optional
          *     because inputs can be missing; the frontend renders '—' for None.
@@ -497,6 +544,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_oversight_api_analyses__analysis_id__oversight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OversightRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
