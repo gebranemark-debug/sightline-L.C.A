@@ -49,11 +49,27 @@ class Flag(BaseModel):
 class Factor(BaseModel):
     """One contribution to the scorecard from finance.score_credit. `points`
     can be negative (drag) or positive (boost) — this is the explainability
-    story: the sum of factor points plus baseline 50 = score."""
+    story: the sum of factor points plus baseline 50 = score.
+
+    max_positive and max_negative expose the range each factor can actually
+    return — makes the implicit weighting visible (DSCR carries ±25, LTV
+    carries +6/-15, concentration carries 0/-15, etc.). Frontend can render
+    the bar with the factor's full theoretical swing as its scale."""
     key: str
     label: str
     value: str
     points: int
+    max_positive: int
+    max_negative: int
+
+
+class Knockout(BaseModel):
+    """Override gate — fires on specific conditions regardless of the
+    composite score. Hard forces the decision to DECLINE. Soft caps the
+    decision at REVIEW (only downgrades from APPROVE; DECLINE stays DECLINE
+    but the knockout is still surfaced for the audit trail)."""
+    type: Literal["hard", "soft"]
+    reason: str
 
 
 class AnalyzeRequest(BaseModel):
@@ -86,6 +102,12 @@ class AnalysisResult(BaseModel):
     officer_action: Optional[OfficerAction] = None
     officer_note: Optional[str] = None
     officer_action_at: Optional[datetime] = None
+
+    # Knockout gate that fired on this analysis (if any). Deterministic
+    # from the persisted ratios + financials — the router computes it at
+    # response time rather than persisting a column, so existing rows
+    # surface the current knockout logic on GET without a migration.
+    knockout: Optional[Knockout] = None
 
 
 class AnalysisSummary(BaseModel):

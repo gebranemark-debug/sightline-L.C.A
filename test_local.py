@@ -510,4 +510,114 @@ print("  unknown analysis id → 404                                            
 router_mod.extract_financials = fake_extract
 
 
+# --- Knockout gates ---
+print("\n=== 7. Knockout gates ===")
+
+# Baseline: Meridian input → no knockouts → decision unchanged
+r_mer = compute_ratios(MERIDIAN)
+s_mer = score_credit(r_mer, MERIDIAN)
+assert s_mer["knockout"] is None
+assert s_mer["decision"] == "APPROVE"
+print(f"  Meridian     → no knockouts, APPROVE {s_mer['score']}/100                                 [OK]")
+
+# Regression: Aurora composite REVIEW, no knockouts
+r_aur = compute_ratios(AURORA)
+s_aur = score_credit(r_aur, AURORA)
+assert s_aur["knockout"] is None, s_aur["knockout"]
+assert s_aur["decision"] == "REVIEW"
+print(f"  Aurora       → no knockouts, REVIEW {s_aur['score']}/100                                  [OK]")
+
+# Regression: Cascade — DSCR 0.5 hard knockout fires (matches composite DECLINE)
+r_cas = compute_ratios(CASCADE)
+s_cas = score_credit(r_cas, CASCADE)
+assert s_cas["knockout"] == {"type": "hard", "reason": "DSCR below 1.0× — cannot service debt"}
+assert s_cas["decision"] == "DECLINE"
+print(f"  Cascade      → DSCR hard knockout, DECLINE {s_cas['score']}/100 (unchanged)               [OK]")
+
+# Factor rows now expose their weight ranges
+dscr_factor = next(f for f in s_mer["factors"] if f["key"] == "dscr")
+assert dscr_factor["max_positive"] == 20 and dscr_factor["max_negative"] == -25
+ltv_factor = next(f for f in s_mer["factors"] if f["key"] == "ltv")
+assert ltv_factor["max_positive"] == 6 and ltv_factor["max_negative"] == -15
+conc_factor = next(f for f in s_mer["factors"] if f["key"] == "concentration")
+assert conc_factor["max_positive"] == 0 and conc_factor["max_negative"] == -15
+print("  Factor.max_positive / max_negative exposed for DSCR / LTV / concentration    [OK]")
+
+# Hard: DSCR < 1.0
+s = score_credit(dict(r_mer, dscr=0.5), MERIDIAN)
+assert s["knockout"] == {"type": "hard", "reason": "DSCR below 1.0× — cannot service debt"}
+assert s["decision"] == "DECLINE"
+print("  Forced DSCR 0.5           → DECLINE, hard knockout                            [OK]")
+
+# Hard: Debt/EBITDA > 6.0
+s = score_credit(dict(r_mer, debtToEbitda=8.0), MERIDIAN)
+assert s["knockout"] == {"type": "hard", "reason": "Leverage above 6× EBITDA — excessive"}
+assert s["decision"] == "DECLINE"
+print("  Forced Debt/EBITDA 8      → DECLINE, hard knockout                            [OK]")
+
+# Hard: LTV > 1.0
+s = score_credit(dict(r_mer, ltv=1.2), MERIDIAN)
+assert s["knockout"] == {"type": "hard", "reason": "Loan-to-value above 100% — undercollateralized"}
+assert s["decision"] == "DECLINE"
+print("  Forced LTV 1.2            → DECLINE, hard knockout                            [OK]")
+
+# Hard: OCF < 0
+s = score_credit(dict(r_mer, ocf=-50000), MERIDIAN)
+assert s["knockout"] == {"type": "hard", "reason": "Operating cash flow negative"}
+assert s["decision"] == "DECLINE"
+print("  Forced OCF negative       → DECLINE, hard knockout                            [OK]")
+
+# Soft: concentration > 0.5 with composite APPROVE → REVIEW
+s = score_credit(dict(r_mer, topCustomerShare=0.6), MERIDIAN)
+assert s["knockout"] == {"type": "soft", "reason": "Single customer > 50% of revenue"}
+assert s["decision"] == "REVIEW"
+print("  Concentration 0.6 + APPROVE composite → REVIEW, soft knockout                [OK]")
+
+# Soft: concentration > 0.5 with composite DECLINE → stays DECLINE, knockout still populated
+manual = {
+    "dscr": 1.05, "debtToEbitda": 5.5, "debtToEquity": None,
+    "currentRatio": 0.5, "quickRatio": 0.3,
+    "netMargin": 0.02, "revenueGrowth": 0.1, "receivablesGrowth": 0.5,
+    "dso": 60, "dio": 60, "dpo": 30, "ccc": 150,
+    "ocf": 10000, "ltv": 0.95, "topCustomerShare": 0.6,
+}
+s = score_credit(manual, {})
+assert s["decision"] == "DECLINE", (s["decision"], s["score"])
+assert s["knockout"] == {"type": "soft", "reason": "Single customer > 50% of revenue"}
+print("  Concentration 0.6 + DECLINE composite → stays DECLINE, knockout in audit     [OK]")
+
+# Multiple hard knockouts fire → first-encountered (DSCR) wins
+s = score_credit(
+    dict(r_mer, dscr=0.5, debtToEbitda=8.0, ltv=1.2, ocf=-100),
+    MERIDIAN,
+)
+assert s["knockout"] == {"type": "hard", "reason": "DSCR below 1.0× — cannot service debt"}
+print("  Multiple hard triggers    → DSCR fires first-wins                            [OK]")
+
+# LTV=None (unsecured facility) → LTV knockout does NOT fire
+s = score_credit(dict(r_mer, ltv=None), MERIDIAN)
+assert s["knockout"] is None, s["knockout"]
+assert s["decision"] == "APPROVE"
+print("  LTV=None (unsecured)      → no LTV knockout, decision unchanged              [OK]")
+
+# HTTP round-trip: response includes knockout + factor max fields
+router_mod.extract_financials = _stub_returning(CASCADE)
+r_ko = client.post("/api/analyze", json={"text": "Cascade knockout HTTP round-trip, more than forty chars."})
+assert r_ko.status_code == 200
+http_data = r_ko.json()
+assert http_data["knockout"] == {"type": "hard", "reason": "DSCR below 1.0× — cannot service debt"}
+http_dscr = next(f for f in http_data["factors"] if f["key"] == "dscr")
+assert http_dscr["max_positive"] == 20 and http_dscr["max_negative"] == -25
+print("  POST /api/analyze response includes knockout + factor max fields             [OK]")
+
+# GET /api/analyses/{id} → knockout is hydrated at read time from persisted ratios
+persisted = client.get(f"/api/analyses/{http_data['id']}").json()
+assert persisted["knockout"] == {"type": "hard", "reason": "DSCR below 1.0× — cannot service debt"}
+persisted_dscr = next(f for f in persisted["factors"] if f["key"] == "dscr")
+assert persisted_dscr["max_positive"] == 20
+print("  GET /api/analyses/{id}  → knockout re-hydrated at read time                  [OK]")
+
+router_mod.extract_financials = fake_extract
+
+
 print("\nALL CHECKS PASSED ✅")
