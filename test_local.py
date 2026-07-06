@@ -108,4 +108,70 @@ missing = client.get("/api/analyses/does-not-exist")
 print(f"  GET /api/analyses/does-not-exist -> {missing.status_code} (expected 404)")
 assert missing.status_code == 404
 
+
+# --- PDF multipart smoke test (LLM stubbed) ---
+print("\n=== 3. API pipeline — PDF upload (LLM stubbed) ===")
+from io import BytesIO  # noqa: E402
+from pypdf import PdfWriter  # noqa: E402
+
+
+def _make_tiny_pdf() -> bytes:
+    """One-page blank PDF, enough to satisfy magic-byte + page-count checks."""
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    buf = BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def fake_extract_from_files(files, text_supplement=None):
+    # Regardless of PDF content, pretend the LLM read Cascade — proves the
+    # multipart path plumbs the downstream pipeline correctly.
+    assert len(files) >= 1
+    for name, data in files:
+        assert isinstance(name, str) and isinstance(data, (bytes, bytearray))
+    return CASCADE
+
+
+router_mod.extract_financials_from_files = fake_extract_from_files
+
+pdf1, pdf2 = _make_tiny_pdf(), _make_tiny_pdf()
+resp = client.post(
+    "/api/analyze",
+    files=[
+        ("files", ("statements.pdf", pdf1, "application/pdf")),
+        ("files", ("tax_return.pdf", pdf2, "application/pdf")),
+    ],
+    data={"text": "focus on FY2024"},
+)
+print(f"  POST /api/analyze (multipart, 2 files + text) -> {resp.status_code}")
+pdf_data = resp.json()
+assert resp.status_code == 200, pdf_data
+print(f"     decision={pdf_data['decision']} score={pdf_data['score']} "
+      f"factors={len(pdf_data['factors'])}")
+assert pdf_data["decision"] == "DECLINE"
+assert pdf_data["counterfactual"]
+
+# The audit trail records that this came from an upload — the source column
+# stores the filenames plus the pasted-notes marker, not the extracted text.
+pdf_record = client.get(f"/api/analyses/{pdf_data['id']}").json()
+assert pdf_record["company"] == "Cascade Home Retail"
+
+# Non-PDF content-types get rejected at 415 before any LLM call.
+rej = client.post(
+    "/api/analyze",
+    files=[("files", ("readme.txt", b"not a pdf", "text/plain"))],
+)
+print(f"  POST /api/analyze (non-PDF)  -> {rej.status_code} (expected 415)")
+assert rej.status_code == 415, rej.json()
+
+# Empty multipart (no files) gets 422.
+empty = client.post(
+    "/api/analyze",
+    files=[("files", ("bogus.pdf", b"", "application/pdf"))],
+)
+print(f"  POST /api/analyze (empty PDF) -> {empty.status_code} (expected 415)")
+assert empty.status_code == 415, empty.json()  # empty file fails magic-byte check
+
+
 print("\nALL CHECKS PASSED ✅")
