@@ -220,6 +220,8 @@ export interface components {
             ccc?: number | null;
             /** Ocf */
             ocf?: number | null;
+            /** Ltv */
+            ltv?: number | null;
         };
         /** ValidationError */
         ValidationError: {

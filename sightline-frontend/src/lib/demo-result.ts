@@ -28,6 +28,9 @@ export const DEMO_RESULT: AnalysisResult = {
     dpo: 119.6,
     ccc: 57.6,
     ocf: -120000,
+    // Cascade is an unsecured working-capital revolver — no collateral,
+    // so LTV is null and renders "—" in the grid.
+    ltv: null,
   },
   flags: [
     { sev: "high", text: "DSCR of 0.50× — cash flow does not cover debt service" },
@@ -38,13 +41,15 @@ export const DEMO_RESULT: AnalysisResult = {
     { sev: "high", text: "Receivables up 86.1% vs revenue 18.4% — possible collection issue or channel stuffing" },
   ],
   factors: [
-    { key: "dscr",   label: "Debt service coverage (DSCR)",   value: "0.50×",         points: -25 },
-    { key: "lev",    label: "Leverage (Debt/EBITDA)",         value: "7.50×",         points: -20 },
-    { key: "liq",    label: "Liquidity (current ratio)",      value: "0.95×",         points: -12 },
-    { key: "ccc",    label: "Cash conversion cycle",          value: "58d",           points:   4 },
-    { key: "margin", label: "Net margin",                     value: "-1.4%",         points: -18 },
-    { key: "growth", label: "Growth quality (AR vs revenue)", value: "86.1% / 18.4%", points: -15 },
-    { key: "ocf",    label: "Operating cash flow",            value: "Negative",      points: -18 },
+    { key: "dscr",          label: "Debt service coverage (DSCR)",   value: "0.50×",         points: -25 },
+    { key: "lev",           label: "Leverage (Debt/EBITDA)",         value: "7.50×",         points: -20 },
+    { key: "liq",           label: "Liquidity (current ratio)",      value: "0.95×",         points: -12 },
+    { key: "ccc",           label: "Cash conversion cycle",          value: "58d",           points:   4 },
+    { key: "margin",        label: "Net margin",                     value: "-1.4%",         points: -18 },
+    { key: "growth",        label: "Growth quality (AR vs revenue)", value: "86.1% / 18.4%", points: -15 },
+    { key: "ocf",           label: "Operating cash flow",            value: "Negative",      points: -18 },
+    { key: "concentration", label: "Customer concentration",         value: "—",             points:   0 },
+    { key: "ltv",           label: "Loan-to-value (Debt/Collateral)", value: "—",            points:   0 },
   ],
   counterfactual:
     "Largest drag: debt service coverage (DSCR). Raising DSCR above 1.25× would add roughly +37 points (to about 37/100).",
