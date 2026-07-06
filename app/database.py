@@ -48,3 +48,34 @@ def ensure_analyses_borrower_id_column() -> None:
             conn.execute(text(
                 "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS borrower_id VARCHAR"
             ))
+
+
+def ensure_analyses_oversight_columns() -> None:
+    """Idempotent ALTER to add the three human-oversight columns on existing
+    databases: officer_action, officer_note, officer_action_at.
+
+    Same dialect-aware pattern as ensure_analyses_borrower_id_column. Runs
+    after create_all() so new deployments already have the columns; existing
+    Railway rows keep the fields NULL, which the UI renders as "Awaiting
+    review"."""
+    columns = [
+        ("officer_action", "VARCHAR"),
+        ("officer_note", "TEXT"),
+        ("officer_action_at", "TIMESTAMP"),
+    ]
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        if dialect == "sqlite":
+            existing = {row[1] for row in conn.execute(
+                text("PRAGMA table_info(analyses)")
+            ).fetchall()}
+            for name, sql_type in columns:
+                if name not in existing:
+                    conn.execute(text(
+                        f"ALTER TABLE analyses ADD COLUMN {name} {sql_type}"
+                    ))
+        else:
+            for name, sql_type in columns:
+                conn.execute(text(
+                    f"ALTER TABLE analyses ADD COLUMN IF NOT EXISTS {name} {sql_type}"
+                ))

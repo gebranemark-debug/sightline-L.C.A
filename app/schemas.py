@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 Decision = Literal["APPROVE", "REVIEW", "DECLINE"]
 FlagSeverity = Literal["high", "med"]
+OfficerAction = Literal["CONFIRMED", "OVERRIDDEN"]
 
 
 class Ratios(BaseModel):
@@ -77,6 +78,14 @@ class AnalysisResult(BaseModel):
     factors: list[Factor]
     counterfactual: Optional[str] = None
     memo: str
+
+    # Human oversight (EU AI Act Article 14). None on rows the officer
+    # hasn't reviewed yet; the frontend renders that as "Awaiting review".
+    # The scorecard's decision + score above are never mutated by the
+    # officer — these fields sit alongside as metadata.
+    officer_action: Optional[OfficerAction] = None
+    officer_note: Optional[str] = None
+    officer_action_at: Optional[datetime] = None
 
 
 class AnalysisSummary(BaseModel):
@@ -142,3 +151,10 @@ class BorrowerAnalyzeRequest(BaseModel):
     """POST /api/borrowers/{id}/analyze body: which stored files to feed into
     the pipeline. All file_ids must belong to this borrower."""
     file_ids: list[str]
+
+
+class OversightRequest(BaseModel):
+    """POST /api/analyses/{id}/oversight body. `note` is required for
+    OVERRIDDEN and ignored for CONFIRMED (endpoint drops it silently)."""
+    action: OfficerAction
+    note: Optional[str] = None

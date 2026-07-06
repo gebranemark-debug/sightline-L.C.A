@@ -418,4 +418,82 @@ print(f"  ?decision=DECLINE&unattached=true → {len(decline_unattached)} row(s)
 print(f"  ?unattached=false → attached APPROVEs surface here                          [OK]")
 
 
+# --- Human oversight (EU AI Act Article 14) ---
+print("\n=== 6. Human oversight persistence (LLM stubbed) ===")
+
+# Fresh analysis for oversight tests — use Aurora so the decision is REVIEW
+# (the state where oversight actually matters day-to-day).
+router_mod.extract_financials = _stub_returning(AURORA)
+o1 = client.post("/api/analyze", json={"text": "Aurora REVIEW pre-oversight, more than forty characters here for sure."})
+assert o1.status_code == 200 and o1.json()["decision"] == "REVIEW"
+aid1 = o1.json()["id"]
+
+# Baseline: fresh analysis has all oversight fields None.
+baseline = client.get(f"/api/analyses/{aid1}").json()
+assert baseline["officer_action"] is None
+assert baseline["officer_note"] is None
+assert baseline["officer_action_at"] is None
+print("  fresh analysis → officer_action=None (Awaiting review)                       [OK]")
+
+# CONFIRMED without a note → 200. Response echoes the persisted state.
+c1 = client.post(f"/api/analyses/{aid1}/oversight", json={"action": "CONFIRMED"})
+assert c1.status_code == 200, c1.json()
+c1_data = c1.json()
+assert c1_data["officer_action"] == "CONFIRMED"
+assert c1_data["officer_note"] is None
+assert c1_data["officer_action_at"] is not None
+# Round-trip via GET to be sure the DB commit stuck.
+persisted = client.get(f"/api/analyses/{aid1}").json()
+assert persisted["officer_action"] == "CONFIRMED"
+assert persisted["officer_action_at"] is not None
+# Model's decision + score untouched — the whole point of the design.
+assert persisted["decision"] == "REVIEW"
+assert persisted["score"] == baseline["score"]
+print("  CONFIRMED → persisted; decision + score unchanged                            [OK]")
+
+# Second oversight on the same analysis → 409 (one-shot per demo).
+c2 = client.post(f"/api/analyses/{aid1}/oversight", json={"action": "CONFIRMED"})
+assert c2.status_code == 409, c2.json()
+assert "already been reviewed" in c2.json()["detail"]
+print("  second oversight on same analysis → 409                                     [OK]")
+
+# Fresh analysis for the OVERRIDDEN path.
+router_mod.extract_financials = _stub_returning(AURORA)
+o2 = client.post("/api/analyze", json={"text": "Second Aurora for override path, more than forty characters here yes."})
+assert o2.status_code == 200
+aid2 = o2.json()["id"]
+
+# OVERRIDDEN without a note → 422 with a specific message.
+bad = client.post(f"/api/analyses/{aid2}/oversight", json={"action": "OVERRIDDEN"})
+assert bad.status_code == 422, bad.json()
+assert bad.json()["detail"] == "An override requires a reason."
+print("  OVERRIDDEN with no note → 422 with specific reason message                  [OK]")
+
+# OVERRIDDEN with whitespace-only note → 422 too (the trim catches it).
+whitespace = client.post(f"/api/analyses/{aid2}/oversight", json={"action": "OVERRIDDEN", "note": "   \n\t  "})
+assert whitespace.status_code == 422
+print("  OVERRIDDEN with whitespace-only note → 422                                  [OK]")
+
+# OVERRIDDEN with a real note → 200.
+ok = client.post(
+    f"/api/analyses/{aid2}/oversight",
+    json={"action": "OVERRIDDEN", "note": "Concentration concern outweighs the DSCR — routing to committee."},
+)
+assert ok.status_code == 200, ok.json()
+persisted2 = client.get(f"/api/analyses/{aid2}").json()
+assert persisted2["officer_action"] == "OVERRIDDEN"
+assert persisted2["officer_note"] == "Concentration concern outweighs the DSCR — routing to committee."
+assert persisted2["officer_action_at"] is not None
+assert persisted2["decision"] == "REVIEW"  # untouched
+print("  OVERRIDDEN + note → persisted; decision + score unchanged                    [OK]")
+
+# Unknown analysis id → 404.
+missing = client.post("/api/analyses/does-not-exist/oversight", json={"action": "CONFIRMED"})
+assert missing.status_code == 404
+print("  unknown analysis id → 404                                                    [OK]")
+
+# Restore the original stub.
+router_mod.extract_financials = fake_extract
+
+
 print("\nALL CHECKS PASSED ✅")
