@@ -4,7 +4,9 @@ type Props = {
   filename: string;
   sizeBytes: number;
   pageCount: number | null;
-  onRemove: () => void;
+  // Optional — omit on read-only surfaces (e.g. borrower detail, where files
+  // are already persisted and there's no delete endpoint yet).
+  onRemove?: () => void;
 };
 
 function formatSize(bytes: number): string {
@@ -30,14 +32,16 @@ export function FileChip({ filename, sizeBytes, pageCount, onRemove }: Props) {
         <div className="truncate text-[12.5px] text-ink">{filename}</div>
         <div className="text-[11px] text-muted">{meta}</div>
       </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${filename}`}
-        className="shrink-0 rounded-md p-1 text-muted hover:text-decision-red"
-      >
-        <X size={14} />
-      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${filename}`}
+          className="shrink-0 rounded-md p-1 text-muted hover:text-decision-red"
+        >
+          <X size={14} />
+        </button>
+      )}
     </div>
   );
 }

@@ -1,75 +1,41 @@
-import { useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { ScrollText, ShieldCheck } from "lucide-react";
-import type { AnalysisResult } from "./api/client";
-import { InputPanel } from "./features/input/InputPanel";
-import { DecisionHeader } from "./features/result/DecisionHeader";
-import { FactorsPanel } from "./features/result/FactorsPanel";
-import { RatiosGrid } from "./features/result/RatiosGrid";
-import { FlagsList } from "./features/result/FlagsList";
-import { MemoPanel } from "./features/result/MemoPanel";
-import { HumanOversight } from "./features/result/HumanOversight";
-import { EmptyState, ErrorState, RunningState } from "./features/result/States";
-import { DEMO_RESULT } from "./lib/demo-result";
+import { useHashRoute } from "./hooks/useHashRoute";
+import { TabBar } from "./features/tabs/TabBar";
+import { SamplesView } from "./features/samples/SamplesView";
+import { BorrowersList } from "./features/borrowers/BorrowersList";
+import { BorrowerDetail } from "./features/borrowers/BorrowerDetail";
+import { UnderReviewView } from "./features/queue/UnderReviewView";
+import { DeclinedView } from "./features/queue/DeclinedView";
 
-// Thin shell. All layout, state, and orchestration live here; every visual
-// atom is in features/ or components/.
-//
-// Runner-based submit: InputPanel decides which client function to call
-// (analyze vs analyzeFiles) and hands us back a closure that fires the actual
-// request. We stash the closure in a ref so Retry re-fires the same request
-// with the same files / text — no state duplication here about which path was
-// taken.
-
-type Runner = () => Promise<AnalysisResult>;
-
+// Thin tab shell. Hash-based routing (see useHashRoute) means the four tabs +
+// the borrower detail view are all deep-linkable and survive reloads. The
+// header (logo + EU AI Act pill) stays visible across every tab; each tab
+// renders its own inner shell below the TabBar.
 export default function App() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(DEMO_RESULT);
-  const lastRunner = useRef<Runner | null>(null);
+  const { route, navigate } = useHashRoute();
 
-  async function runSubmit(runner: Runner) {
-    lastRunner.current = runner;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      setResult(await runner());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function retry() {
-    if (lastRunner.current) runSubmit(lastRunner.current);
-  }
-
-  function reset() {
-    setResult(null);
-    setError(null);
-  }
-
-  const rightColumn = loading ? (
-    <RunningState />
-  ) : error ? (
-    <ErrorState message={error} onRetry={retry} />
-  ) : result ? (
-    <>
-      <DecisionHeader result={result} />
-      <FactorsPanel
-        factors={result.factors}
-        counterfactual={result.counterfactual}
+  let view: ReactNode;
+  if (route.tab === "samples") {
+    view = <SamplesView />;
+  } else if (route.tab === "borrowers" && route.borrowerId) {
+    view = (
+      <BorrowerDetail
+        id={route.borrowerId}
+        onBack={() => navigate("#borrowers")}
       />
-      <RatiosGrid ratios={result.ratios} />
-      <FlagsList flags={result.flags} />
-      <MemoPanel memo={result.memo} />
-      <HumanOversight key={result.id} />
-    </>
-  ) : (
-    <EmptyState />
-  );
+    );
+  } else if (route.tab === "borrowers") {
+    view = (
+      <BorrowersList onOpen={(id) => navigate(`#borrowers/${id}`)} />
+    );
+  } else if (route.tab === "review") {
+    view = <UnderReviewView />;
+  } else if (route.tab === "declined") {
+    view = <DeclinedView />;
+  } else {
+    view = <SamplesView />;
+  }
 
   return (
     <div className="min-h-dvh bg-canvas p-4 font-sans text-ink sm:p-6">
@@ -92,19 +58,8 @@ export default function App() {
           Explainable · human-in-the-loop · EU AI Act ready
         </div>
       </header>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        <div className="lg:col-span-2">
-          <InputPanel
-            onSubmit={runSubmit}
-            onReset={reset}
-            loading={loading}
-            hasResult={result !== null}
-          />
-        </div>
-
-        <div className="lg:col-span-3">{rightColumn}</div>
-      </div>
+      <TabBar current={route.tab} onSelect={navigate} />
+      <div className="mt-6">{view}</div>
     </div>
   );
 }
