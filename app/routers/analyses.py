@@ -10,14 +10,16 @@ the handler:
 The JSON+text branch is deliberately kept byte-identical to the previous
 implementation so the deployed Vercel frontend continues to work during the
 backend-first deploy window."""
+import uuid
 from io import BytesIO
 from json import JSONDecodeError
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
@@ -197,6 +199,31 @@ async def validate_and_read_pdfs(
     return result
 
 
+# --------------------------- borrower auto-attach -----------------------------
+# TODO: The find-or-create pattern below is racy under concurrent writers —
+# two simultaneous APPROVE requests for the same company can each miss the
+# SELECT and produce duplicate Borrower rows. The real fix is a
+# UNIQUE(LOWER(name)) index on borrowers plus an IntegrityError-catch on the
+# INSERT (dedupe-then-insert, retry the SELECT on conflict). Not building it
+# here — the demo is single-officer and the fix needs a schema change we
+# don't want to bundle with the auto-attach logic.
+def _find_or_create_borrower(name: str, db: Session) -> models.Borrower:
+    """Case-insensitive, trimmed exact-name match. Creates if none exists.
+    The new row's id is generated client-side so the caller can wire the FK
+    on the same-transaction Analysis record without needing a flush."""
+    trimmed = name.strip()
+    existing = (
+        db.query(models.Borrower)
+        .filter(func.lower(models.Borrower.name) == trimmed.lower())
+        .first()
+    )
+    if existing is not None:
+        return existing
+    fresh = models.Borrower(id=uuid.uuid4().hex, name=trimmed)
+    db.add(fresh)
+    return fresh
+
+
 # ---------------------- shared downstream (code + memo) -----------------------
 def _run_downstream(
     financials: dict,
@@ -207,7 +234,12 @@ def _run_downstream(
 ) -> models.Analysis:
     """Everything from `compute_ratios` onwards — identical for both direct
     /api/analyze paths, and reused by the borrower-analyze endpoint (which
-    passes `borrower_id` so the persisted row joins the borrower's history)."""
+    passes `borrower_id` so the persisted row joins the borrower's history).
+
+    Auto-attach rule: when a caller didn't supply borrower_id and the analysis
+    lands on APPROVE for a real counterparty, resolve the borrower BEFORE
+    creating the record so both rows land in a single commit — no two-phase
+    write, no orphan window in which the analysis exists without its FK."""
     ratios = compute_ratios(financials)
     flags = detect_flags(financials, ratios)
     scoring = score_credit(ratios)
@@ -217,9 +249,21 @@ def _run_downstream(
     except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+    raw_company = (financials.get("company") or "").strip()
+    company_for_record = raw_company or "Unknown borrower"
+
+    if (
+        borrower_id is None
+        and scoring["decision"] == "APPROVE"
+        and raw_company
+        and raw_company.lower() != "unknown borrower"
+    ):
+        borrower = _find_or_create_borrower(raw_company, db)
+        borrower_id = borrower.id
+
     record = models.Analysis(
         borrower_id=borrower_id,
-        company=financials.get("company") or "Unknown borrower",
+        company=company_for_record,
         loan_request=financials.get("loanRequest"),
         decision=scoring["decision"],
         score=scoring["score"],
@@ -238,10 +282,29 @@ def _run_downstream(
 
 
 @router.get("/analyses", response_model=list[schemas.AnalysisSummary])
-def list_analyses(db: Session = Depends(get_db), limit: int = 25):
+def list_analyses(
+    db: Session = Depends(get_db),
+    limit: int = 25,
+    decision: Literal["APPROVE", "REVIEW", "DECLINE"] | None = None,
+    unattached: bool | None = None,
+):
+    """Recent analyses, filtered.
+
+    Both filters are optional and compose:
+      decision=REVIEW              -> only REVIEW rows
+      unattached=true              -> only rows with borrower_id IS NULL
+      decision=REVIEW&unattached=true -> the queue view used by Under review /
+                                        Declined tabs on the frontend
+    """
+    q = db.query(models.Analysis)
+    if decision is not None:
+        q = q.filter(models.Analysis.decision == decision)
+    if unattached is True:
+        q = q.filter(models.Analysis.borrower_id.is_(None))
+    elif unattached is False:
+        q = q.filter(models.Analysis.borrower_id.isnot(None))
     return (
-        db.query(models.Analysis)
-        .order_by(desc(models.Analysis.created_at))
+        q.order_by(desc(models.Analysis.created_at))
         .limit(limit)
         .all()
     )

@@ -289,4 +289,133 @@ print(f"  GET /api/borrowers/does-not-exist -> {missing_b.status_code} (expected
 assert missing_b.status_code == 404
 
 
+# --- Auto-attach on APPROVE + list_analyses filters ---
+print("\n=== 5. Auto-attach on APPROVE (LLM stubbed) ===")
+
+
+def _stub_returning(financials):
+    """Replace extract_financials with one that always returns the given dict.
+    Lets each sub-test drive the auto-attach rule via a specific `company`."""
+    def _fn(_text):
+        return financials
+    return _fn
+
+
+# 5.1 APPROVE + real company → borrower auto-created, analysis attached
+before = client.get("/api/borrowers").json()
+before_names = {b["name"] for b in before}
+assert "Meridian Freight & Logistics" not in before_names, "test precondition"
+
+router_mod.extract_financials = _stub_returning(MERIDIAN)
+r = client.post("/api/analyze", json={"text": "LOAN APPLICATION — Meridian one line, more than forty characters."})
+assert r.status_code == 200, r.json()
+assert r.json()["decision"] == "APPROVE", r.json()
+mer_analysis_id = r.json()["id"]
+
+after = client.get("/api/borrowers").json()
+assert len(after) == len(before) + 1
+meridian_row = next(b for b in after if b["name"] == "Meridian Freight & Logistics")
+assert meridian_row["analysis_count"] == 1
+assert meridian_row["latest_decision"] == "APPROVE"
+assert meridian_row["latest_score"] == 100
+meridian_id = meridian_row["id"]
+
+detail = client.get(f"/api/borrowers/{meridian_id}").json()
+assert any(a["id"] == mer_analysis_id for a in detail["analyses"])
+print(f"  APPROVE + Meridian → auto-created borrower {meridian_id[:8]}… "
+      f"rollup analysis_count=1                    [OK]")
+
+# 5.2 Same-name dedupe: second APPROVE with exact same company
+router_mod.extract_financials = _stub_returning(MERIDIAN)
+r2 = client.post("/api/analyze", json={"text": "SECOND analysis for Meridian, more than forty characters here."})
+assert r2.status_code == 200 and r2.json()["decision"] == "APPROVE"
+after2 = client.get("/api/borrowers").json()
+assert len(after2) == len(after), "same name should NOT create a new borrower"
+meridian_row2 = next(b for b in after2 if b["name"] == "Meridian Freight & Logistics")
+assert meridian_row2["analysis_count"] == 2
+print(f"  same-name APPROVE → attached to existing, analysis_count=2                  [OK]")
+
+# 5.3 Case-insensitive dedupe
+router_mod.extract_financials = _stub_returning(
+    dict(MERIDIAN, company="MERIDIAN FREIGHT & LOGISTICS")
+)
+r3 = client.post("/api/analyze", json={"text": "UPPERCASE variant of Meridian, more than forty characters here."})
+assert r3.status_code == 200 and r3.json()["decision"] == "APPROVE"
+after3 = client.get("/api/borrowers").json()
+assert len(after3) == len(after)
+meridian_row3 = next(b for b in after3 if b["name"] == "Meridian Freight & Logistics")
+assert meridian_row3["analysis_count"] == 3
+print(f"  case-insensitive dedupe → attached, analysis_count=3                        [OK]")
+
+# 5.4 Trim dedupe: leading/trailing whitespace
+router_mod.extract_financials = _stub_returning(
+    dict(MERIDIAN, company="  Meridian Freight & Logistics  ")
+)
+r4 = client.post("/api/analyze", json={"text": "PADDED variant of Meridian, more than forty characters here yes."})
+assert r4.status_code == 200 and r4.json()["decision"] == "APPROVE"
+after4 = client.get("/api/borrowers").json()
+assert len(after4) == len(after)
+meridian_row4 = next(b for b in after4 if b["name"] == "Meridian Freight & Logistics")
+assert meridian_row4["analysis_count"] == 4
+print(f"  trimmed dedupe → attached, analysis_count=4                                 [OK]")
+
+# 5.5 REVIEW → no auto-attach (even with a real company)
+router_mod.extract_financials = _stub_returning(AURORA)
+r5 = client.post("/api/analyze", json={"text": "Aurora REVIEW case, more than forty characters here for sure."})
+assert r5.status_code == 200 and r5.json()["decision"] == "REVIEW"
+after5 = client.get("/api/borrowers").json()
+assert len(after5) == len(after), "REVIEW must NOT create a borrower"
+print(f"  REVIEW → borrower list unchanged                                            [OK]")
+
+# 5.6 DECLINE → no auto-attach, existing Cascade borrower unchanged
+cascade_before = next(b for b in after5 if b["name"] == "Cascade Home Retail Ltd")
+router_mod.extract_financials = _stub_returning(CASCADE)
+r6 = client.post("/api/analyze", json={"text": "Cascade DECLINE case, more than forty characters here for sure."})
+assert r6.status_code == 200 and r6.json()["decision"] == "DECLINE"
+after6 = client.get("/api/borrowers").json()
+assert len(after6) == len(after5)
+cascade_after = next(b for b in after6 if b["name"] == "Cascade Home Retail Ltd")
+assert cascade_after["analysis_count"] == cascade_before["analysis_count"], (
+    "DECLINE must not attach to any borrower, even one that already exists"
+)
+print(f"  DECLINE → Cascade borrower's analysis_count unchanged                       [OK]")
+
+# 5.7 APPROVE + "Unknown borrower" placeholder → no auto-attach
+router_mod.extract_financials = _stub_returning(dict(MERIDIAN, company="Unknown borrower"))
+r7 = client.post("/api/analyze", json={"text": "Unknown-borrower APPROVE, more than forty characters here yes."})
+assert r7.status_code == 200 and r7.json()["decision"] == "APPROVE"
+after7 = client.get("/api/borrowers").json()
+assert len(after7) == len(after6), "Unknown borrower placeholder must not create a row"
+print(f'  APPROVE + company="Unknown borrower" → no attach                            [OK]')
+
+# 5.8 APPROVE + empty company → no auto-attach
+router_mod.extract_financials = _stub_returning(dict(MERIDIAN, company=""))
+r8 = client.post("/api/analyze", json={"text": "Empty-company APPROVE, more than forty characters here for real."})
+assert r8.status_code == 200 and r8.json()["decision"] == "APPROVE"
+after8 = client.get("/api/borrowers").json()
+assert len(after8) == len(after6)
+print(f"  APPROVE + company=\"\" → no attach                                           [OK]")
+
+# Restore the routing stub so subsequent tests behave sensibly if extended.
+router_mod.extract_financials = fake_extract
+
+# 5.9 Filter params on /api/analyses
+review_unattached = client.get("/api/analyses?decision=REVIEW&unattached=true").json()
+assert review_unattached and all(a["decision"] == "REVIEW" for a in review_unattached), (
+    review_unattached
+)
+decline_unattached = client.get("/api/analyses?decision=DECLINE&unattached=true").json()
+assert decline_unattached and all(a["decision"] == "DECLINE" for a in decline_unattached), (
+    decline_unattached
+)
+# unattached=false should surface at least one APPROVE (the ones attached to Meridian)
+attached_only = client.get("/api/analyses?unattached=false&limit=100").json()
+assert attached_only, "expected the attached Meridian APPROVEs to surface here"
+attached_ids = {a["id"] for a in attached_only}
+assert mer_analysis_id in attached_ids, "auto-attached analysis missing from unattached=false"
+print(f"  ?decision=REVIEW&unattached=true → {len(review_unattached)} row(s)                                  [OK]")
+print(f"  ?decision=DECLINE&unattached=true → {len(decline_unattached)} row(s)                                 [OK]")
+print(f"  ?unattached=false → attached APPROVEs surface here                          [OK]")
+
+
 print("\nALL CHECKS PASSED ✅")
