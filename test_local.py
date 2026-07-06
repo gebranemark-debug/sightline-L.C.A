@@ -20,7 +20,9 @@ MERIDIAN = dict(company="Meridian Freight & Logistics", loanRequest=250000,
     accountsReceivableCurrent=620000, accountsReceivablePrior=540000,
     inventory=210000, currentAssets=1210000, currentLiabilities=640000,
     accountsPayable=410000, totalDebt=1150000, totalEquity=1480000,
-    debtService=330000, operatingCashFlow=450000)
+    debtService=330000, operatingCashFlow=450000,
+    # Secured on the existing fleet (see loan file). No customer concentration.
+    topCustomerShare=None, collateralValue=1800000)
 
 CASCADE = dict(company="Cascade Home Retail", loanRequest=300000,
     revenueCurrent=5800000, revenuePrior=4900000, cogsCurrent=4640000,
@@ -29,7 +31,9 @@ CASCADE = dict(company="Cascade Home Retail", loanRequest=300000,
     accountsReceivableCurrent=1340000, accountsReceivablePrior=720000,
     inventory=1180000, currentAssets=2610000, currentLiabilities=2740000,
     accountsPayable=1520000, totalDebt=1350000, totalEquity=420000,
-    debtService=360000, operatingCashFlow=-120000)
+    debtService=360000, operatingCashFlow=-120000,
+    # Unsecured working-capital revolver — LTV renders "—" downstream.
+    topCustomerShare=None, collateralValue=None)
 
 AURORA = dict(company="Aurora Precision Manufacturing", loanRequest=200000,
     revenueCurrent=3100000, revenuePrior=2950000, cogsCurrent=2170000,
@@ -38,7 +42,10 @@ AURORA = dict(company="Aurora Precision Manufacturing", loanRequest=200000,
     accountsReceivableCurrent=540000, accountsReceivablePrior=500000,
     inventory=480000, currentAssets=1170000, currentLiabilities=890000,
     accountsPayable=420000, totalDebt=1280000, totalEquity=940000,
-    debtService=310000, operatingCashFlow=230000)
+    debtService=310000, operatingCashFlow=230000,
+    # Automotive anchor is 38% of revenue (in-band concentration drag),
+    # secured against machinery — LTV = 1.28M / 1.6M = 80% (neutral band).
+    topCustomerShare=0.38, collateralValue=1600000)
 
 print("=== 1. Finance engine (deterministic) ===")
 expected = {"Meridian": "APPROVE", "Cascade": "DECLINE", "Aurora": "REVIEW"}
