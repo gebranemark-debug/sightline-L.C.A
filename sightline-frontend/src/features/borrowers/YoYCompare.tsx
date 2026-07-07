@@ -69,11 +69,16 @@ export function YoYCompare({ analyses }: Props) {
       .map<Factor | null>((f) => {
         const p = priorByKey.get(f.key);
         if (!p) return null;
+        // Delta inherits the factor's static weight range so the FactorsPanel
+        // sort (by total range) treats a delta row the same as an absolute
+        // one — bigger-swing factors keep bubbling to the top.
         return {
           key: f.key,
           label: f.label,
           value: f.value,
           points: f.points - p.points,
+          max_positive: f.max_positive,
+          max_negative: f.max_negative,
         };
       })
       .filter((f): f is Factor => f !== null);

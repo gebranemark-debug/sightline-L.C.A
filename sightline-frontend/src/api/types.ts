@@ -243,6 +243,7 @@ export interface components {
             officer_note?: string | null;
             /** Officer Action At */
             officer_action_at?: string | null;
+            knockout?: components["schemas"]["Knockout"] | null;
         };
         /**
          * AnalysisSummary
@@ -342,6 +343,11 @@ export interface components {
          * @description One contribution to the scorecard from finance.score_credit. `points`
          *     can be negative (drag) or positive (boost) — this is the explainability
          *     story: the sum of factor points plus baseline 50 = score.
+         *
+         *     max_positive and max_negative expose the range each factor can actually
+         *     return — makes the implicit weighting visible (DSCR carries ±25, LTV
+         *     carries +6/-15, concentration carries 0/-15, etc.). Frontend can render
+         *     the bar with the factor's full theoretical swing as its scale.
          */
         Factor: {
             /** Key */
@@ -352,6 +358,10 @@ export interface components {
             value: string;
             /** Points */
             points: number;
+            /** Max Positive */
+            max_positive: number;
+            /** Max Negative */
+            max_negative: number;
         };
         /**
          * FileSummary
@@ -389,6 +399,22 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * Knockout
+         * @description Override gate — fires on specific conditions regardless of the
+         *     composite score. Hard forces the decision to DECLINE. Soft caps the
+         *     decision at REVIEW (only downgrades from APPROVE; DECLINE stays DECLINE
+         *     but the knockout is still surfaced for the audit trail).
+         */
+        Knockout: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "hard" | "soft";
+            /** Reason */
+            reason: string;
         };
         /**
          * OversightRequest
