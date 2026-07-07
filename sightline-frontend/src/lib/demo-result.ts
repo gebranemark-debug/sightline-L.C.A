@@ -40,17 +40,26 @@ export const DEMO_RESULT: AnalysisResult = {
     { sev: "med",  text: "Current ratio of 0.95× — short-term liabilities exceed current assets" },
     { sev: "high", text: "Receivables up 86.1% vs revenue 18.4% — possible collection issue or channel stuffing" },
   ],
+  // Each factor carries the same static max_positive / max_negative range
+  // finance.MAX_POINTS ships from the backend — kept in sync manually here so
+  // the demo mirrors what a live analysis returns.
   factors: [
-    { key: "dscr",          label: "Debt service coverage (DSCR)",   value: "0.50×",         points: -25 },
-    { key: "lev",           label: "Leverage (Debt/EBITDA)",         value: "7.50×",         points: -20 },
-    { key: "liq",           label: "Liquidity (current ratio)",      value: "0.95×",         points: -12 },
-    { key: "ccc",           label: "Cash conversion cycle",          value: "58d",           points:   4 },
-    { key: "margin",        label: "Net margin",                     value: "-1.4%",         points: -18 },
-    { key: "growth",        label: "Growth quality (AR vs revenue)", value: "86.1% / 18.4%", points: -15 },
-    { key: "ocf",           label: "Operating cash flow",            value: "Negative",      points: -18 },
-    { key: "concentration", label: "Customer concentration",         value: "—",             points:   0 },
-    { key: "ltv",           label: "Loan-to-value (Debt/Collateral)", value: "—",            points:   0 },
+    { key: "dscr",          label: "Debt service coverage (DSCR)",    value: "0.50×",         points: -25, max_positive: 20, max_negative: -25 },
+    { key: "lev",           label: "Leverage (Debt/EBITDA)",          value: "7.50×",         points: -20, max_positive: 10, max_negative: -20 },
+    { key: "liq",           label: "Liquidity (current ratio)",       value: "0.95×",         points: -12, max_positive:  8, max_negative: -12 },
+    { key: "ccc",           label: "Cash conversion cycle",           value: "58d",           points:   4, max_positive:  8, max_negative: -12 },
+    { key: "margin",        label: "Net margin",                      value: "-1.4%",         points: -18, max_positive:  8, max_negative: -18 },
+    { key: "growth",        label: "Growth quality (AR vs revenue)",  value: "86.1% / 18.4%", points: -15, max_positive:  6, max_negative: -15 },
+    { key: "ocf",           label: "Operating cash flow",             value: "Negative",      points: -18, max_positive:  6, max_negative: -18 },
+    { key: "concentration", label: "Customer concentration",          value: "—",             points:   0, max_positive:  0, max_negative: -15 },
+    { key: "ltv",           label: "Loan-to-value (Debt/Collateral)", value: "—",             points:   0, max_positive:  6, max_negative: -15 },
   ],
+  // Cascade's DSCR of 0.50× trips the first hard knockout gate. Matches
+  // exactly what the live backend hydrates on GET for this shape.
+  knockout: {
+    type: "hard",
+    reason: "DSCR below 1.0× — cannot service debt",
+  },
   counterfactual:
     "Largest drag: debt service coverage (DSCR). Raising DSCR above 1.25× would add roughly +37 points (to about 37/100).",
   memo:
